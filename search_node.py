@@ -1,10 +1,8 @@
 import blackboard
 import struct
 import os
-import search
 import node
 import time
-import psycopg2
 
 class SearchNode(node.Node):
     def __init__(self, unix_sock):
@@ -14,26 +12,12 @@ class SearchNode(node.Node):
         self.messages[0x01] = ["!QQc", self.do]
 
     def do(self, start, end, _):
+        import search
+
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
-        done = False
-        conn = None
-        while not done:
-            try:
-                conn = psycopg2.connect(host="localhost", port='9991', database="postgres")
-                search.search_core(conn, start, end)
-                done = True
-            except psycopg2.DatabaseError as e:
-                if conn is not None:
-                    conn.rollback()
-                    conn.close()
-                    conn = None
-                raise e
-            finally:
-                if conn is not None:
-                    conn.commit()
-                    conn.close()
+        search.search_core(start, end)
 
     def prepare(self, msg):
         lgt = struct.unpack("!I", msg[:4])[0]

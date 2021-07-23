@@ -2,11 +2,11 @@ import numpy
 from os import path
 import blackboard
 import pepid_utils
-import psycopg2
 import time
 import random
 import os
 import re
+import helper
 
 def identipy_rnhs(cands, query):
     import scipy
@@ -92,7 +92,7 @@ def rnhs(cands, query):
     is_ppm = blackboard.config['search']['matching unit'] == 'ppm'
     tol = blackboard.config['search'].getfloat('peak matching tolerance')
 
-    spec = numpy.array(query['spec'])
+    spec = numpy.array(query['spec'])[:query['npeaks']]
 
     ret = []
     scores = []
@@ -100,11 +100,10 @@ def rnhs(cands, query):
     varmods = set(map(lambda x: x.strip()[0], blackboard.config['search']['variable modifications'].split(",")))
     
     for cand in cands:
-        th_masses = numpy.array(cand['spec'])[:,0]
+        th_masses = numpy.array(cand['spec'][:cand['npeaks']])[:,0]
         th_masses = th_masses.reshape((-1,))
         th_masses.sort()
 
-        import sys
         all_masses = numpy.repeat(th_masses, spec.shape[0]).reshape((-1, spec.shape[0])).T
         all_dists = numpy.abs(all_masses - spec[:,0].reshape((-1, 1)))
 
@@ -144,7 +143,7 @@ def rnhs(cands, query):
         scores.append(rnhs_score)
     return scores, ret
 
-def search_core(conn, start, end):
+def search_core(start, end):
     """
     Core search algorithm: collects and finalizes the data, then
     parses and applies the user scoring function from the config.
@@ -171,6 +170,9 @@ def search_core(conn, start, end):
     tol = blackboard.config['search'].getfloat('peak matching tolerance')
     is_ppm = blackboard.config['search']['matching unit'] == "ppm"
 
+    queries = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "query{}.npy".format(start)), dtype=blackboard.QUERY_DTYPE, shape=blackboard.config['performance'].getint('batch size'), mode='r')
+    results = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "results{}.npy".format(start)), dtype=blackboard.RES_DTYPE, shape=blackboard.config['performance'].getint('batch size'), mode='w+')
+
     scoring_fn = rnhs
     try:
         mod, fn = blackboard.config['scoring']['score function'].rsplit('.', 1)
@@ -180,64 +182,39 @@ def search_core(conn, start, end):
         import sys
         sys.stderr.write("[search]: user scoring function not found, using default scorer instead")
 
-    cursor = conn.cursor()
-
-    queries_cols = "queries.rowid, title, queries.rt, charge, queries.mass, meta, queries.spec, "
-    cand_cols = "description, sequence, mods, candidates.rt, length, candidates.mass, candidates.spec "
-    cursor.execute("SELECT {} FROM queries JOIN candidates ON (candidates.mass BETWEEN queries.min_mass AND queries.max_mass) WHERE queries.rowid BETWEEN %s AND %s;".format(queries_cols + cand_cols), [start+1, end+1])
-
     query_batch = {}
     cand_batch = {}
 
-    results = cursor.fetchall()
-
-    for i, x in enumerate(results):
-        if x[0] not in query_batch:
-            query_batch[x[0]] = {'title': x[1], 'rt': x[2], 'charge': x[3], 'mass': x[4], 'meta': eval(x[5]), 'spec': eval(x[6])}
-        cand = {'description': x[7], 'sequence': x[8], 'mods': eval(x[9]), 'rt': x[10], 'length': x[11], 'mass': x[12], 'spec': eval(x[13])}
-        if x[0] in cand_batch:
-            cand_batch[x[0]].append(cand)
-        else:
-            cand_batch[x[0]] = [cand]
+    import sys
+    for q in queries:
+        if(q['mass'] > 0):
+            cands_start, cands_end = helper.find(blackboard.DB_PATH, helper.Db, q['min_mass'], q['max_mass'])
+            if cands_start >= 0:
+                if cands_end < 0:
+                    cands_end = cands_start
+                query_batch[q['title']] = q
+                cand_batch[q['title']] = helper.load_db(blackboard.DB_PATH, start=cands_start, end=cands_end+1)
 
     for i, k in enumerate(query_batch.keys()):
         scores, score_data = scoring_fn(cand_batch[k], query_batch[k])
 
-        done = False
-        while not done:
-            try:
-                conn.executemany("INSERT INTO results (title, description, seq, modseq, calc_mass, mass, rt, charge, score, score_data) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);",
-                    [[query_batch[k]['title'], cand['description'], cand['sequence'],
-                        "".join([s if m == 0 else (s + "[{}]".format(m)) for s, m in zip(cand['sequence'], cand['mods'])]),
-                        cand['mass'], query_batch[k]['mass'], query_batch[k]['rt'], query_batch[k]['charge'], score, repr(data)]
-                        for cand, score, data in zip(cand_batch[k], scores, score_data)])
-                conn.commit()
-                done = True
-            except psycopg2.errors.DeadlockDetected:
-                time.sleep(random.random())
-                continue
-            except psycopg2.DatabaseError as e:
-                raise e
+        for j in range(len(scores)):
+            results[i]['title'] = k
+            results[i]['description'] = cand_batch[k][j]['description']
+            results[i]['seq'] = cand_batch[k][j]['sequence']
+            results[i]['modseq'] = cand_batch[k][j]['mods']
+            results[i]['length'] = len(cand_batch[k][j]['sequence'])
+            results[i]['calc_mass'] = cand_batch[k][j]['mass']
+            results[i]['mass'] = query_batch[k]['mass']
+            results[i]['rt'] = query_batch[k]['rt']
+            results[i]['charge'] = query_batch[k]['charge']
+            results[i]['score'] = scores[j]
+            results[i]['score_data'] = score_data[j]
+        results.flush()
 
 def prepare_search():
     """
     Creates necessary tables in the temporary database for final search results
     """
 
-    conn = None
-
-    while conn is None:
-        try:
-            conn = psycopg2.connect(host="localhost", port='9991', database="postgres")
-        except psycopg2.errors.DeadlockDetected:
-            time.sleep(random.random())
-            continue
-        except psycopg2.DatabaseError as e:
-            raise e
-
-    os.environ['TMPDIR'] = blackboard.config['data']['tmpdir']
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE results (rowid SERIAL, title TEXT, description TEXT, seq TEXT, modseq TEXT, calc_mass REAL, mass REAL, rt REAL, charge INTEGER, score REAL, score_data TEXT);")
-
-    conn.commit()
-    conn.close()
+    pass

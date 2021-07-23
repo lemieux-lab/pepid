@@ -2,13 +2,9 @@ import time
 import sys
 import tqdm
 import numpy
+import pickle
 
 import blackboard
-import queries
-import db
-import processing
-import pepid_io
-import search
 
 import logging
 import subprocess
@@ -26,31 +22,6 @@ import copy
 # 0: success
 # 1: args incorrect
 # 2: invalid config parameter (fatal)
-
-cfg_file = None
-blackboard.config.read('data/default.cfg')
-if __name__ == '__main__':
-    if(len(sys.argv) != 2):
-        print("USAGE: {} config.cfg".format(sys.argv[0]))
-        sys.exit(1)
-
-    blackboard.config.read(sys.argv[1])
-    cfg_file = sys.argv[1]
-
-os.environ['PATH'] = os.environ['PATH'] + ";" + os.path.join(blackboard.config['performance']['postgresql path'], "bin")
-os.environ['POSTGRESQL_HOME'] = blackboard.config['performance']['postgresql path']
-
-blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
-
-initdb_proc = subprocess.Popen([os.path.join(blackboard.config['performance']['postgresql path'], 'bin', "initdb"), "-D" + os.path.join(blackboard.TMP_PATH, "pgdb")])
-initdb_proc.wait()
-os.environ['PGPORT'] = '9991'
-os.environ['PGHOST'] = 'localhost'
-pgstart_proc = subprocess.Popen([os.path.join(blackboard.config['performance']['postgresql path'], "bin", "pg_ctl"), "start", "-w", "-o -c max_wal_size=3072", "-D" + os.path.join(blackboard.TMP_PATH, "pgdb")])
-pgstart_proc.wait()
-
-logging.basicConfig(format="[%(asctime)s] %(levelname)s: %(message)s", level=eval("logging.{}".format(blackboard.config['logging']['level'].upper())))
-log = logging.getLogger("pepid")
 
 def handle_response(resp):
     ret = []
@@ -224,6 +195,15 @@ def run():
     Entry point
     """
 
+    blackboard.setup_constants()
+
+    import helper
+    import queries
+    import db
+    import processing
+    import pepid_io
+    import search
+
     try:
         log.info("Preparing Input Databases...")
         db.prepare_db()
@@ -244,9 +224,6 @@ def run():
         n_db_batches = math.ceil(n_db / batch_size)
         n_query_batches = math.ceil(n_queries / batch_size)
     
-        db_batch = 0
-        query_batch = 0
-
         base_path = blackboard.TMP_PATH
         qspec = [("queries_node.py", qnodes, n_query_batches,
                         [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
@@ -257,12 +234,22 @@ def run():
                         [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
                         [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
 
-        handle_nodes("Input Processing", qspec + dbspec)
+        handle_nodes("Input Processing", (qspec + dbspec) if blackboard.config['pipeline'].getboolean('db processing') else qspec)
+        idx = 0
 
         qnodes = blackboard.config['performance'].getint('post query nodes')
         dbnodes = blackboard.config['performance'].getint('post db nodes')
 
-        n_db = db.count_peps()
+        batch_start = 0
+        n_peps = 0
+        if blackboard.config['pipeline'].getboolean('db processing'):
+            log.info("DB: Mergesort...")
+            n_peps = helper.sort([os.path.join(blackboard.config['data']['tmpdir'], "predb{}.bin".format(i * batch_size)) for i in range(n_db_batches)], blackboard.DB_PATH, helper.Db, key='mass')
+            log.info("DB: Mergesort complete")
+        else:
+            n_peps = db.count_peps()
+
+        n_db = n_peps
         n_db_batches = math.ceil(n_db / batch_size)
 
         if qnodes < 0 or dbnodes < 0:
@@ -280,9 +267,6 @@ def run():
 
         handle_nodes("Input Postprocessing", qspec + dbspec)
 
-        log.info("Preparing Search Database...")
-        search.prepare_search()
-
         n_search_batches = math.ceil(n_queries / batch_size)
         sspec = [("search_node.py", snodes, n_search_batches,
                         [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
@@ -298,15 +282,33 @@ def run():
 
     finally:
         log.info("Cleaning up...")
-        pgstop_proc = subprocess.Popen([os.path.join(blackboard.config['performance']['postgresql path'], "bin", "pg_ctl"), "stop", "-w", "-D" + os.path.join(blackboard.TMP_PATH, "pgdb")])
-        pgstop_proc.wait()
-
         if len(blackboard.TMP_PATH) > 0:
-            # shutil and rmdir both REQUIRE that dir is empty
-            # (or only contain dirs which are recursively empty or only contain dirs in the case of shutil).
-            os.system("rm -rf \"{}\"".format(blackboard.TMP_PATH))
-        if blackboard.config['data']['tmpdir']:
-            os.system("rm -rf \"{}/pepid_socket_*\"".format(blackboard.config['data']['tmpdir']))
+            os.system("rm -rf {}".format(blackboard.TMP_PATH))
+        if len(blackboard.config['data']['tmpdir']) > 0:
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepidtmp*")))
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.npy")))
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "predb*.bin")))
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*_*.bin")))
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.pkl")))
+            # Note: db not removed in case it is to be reused.
 
 if __name__ == "__main__":
+    if(len(sys.argv) != 2):
+        print("USAGE: {} config.cfg".format(sys.argv[0]))
+        sys.exit(1)
+
+    global cfg_file
+    global log
+
+    blackboard.config.read('data/default.cfg')
+
+    blackboard.config.read(sys.argv[1])
+    cfg_file = sys.argv[1]
+
+    logging.basicConfig(format="[%(asctime)s] %(levelname)s: %(message)s", level=eval("logging.{}".format(blackboard.config['logging']['level'].upper())))
+    log = logging.getLogger("pepid")
+
+    blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
+
     run()

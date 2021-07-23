@@ -3,7 +3,6 @@ import time
 import random
 import struct
 import blackboard
-import db
 import os
 import uuid
 import numpy
@@ -67,6 +66,8 @@ def init(klass):
 
     if len(sys.argv) == 3:
         blackboard.config.read(sys.argv[2])
+
+    blackboard.setup_constants()
     blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
 
     this = klass(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket_" + sock))

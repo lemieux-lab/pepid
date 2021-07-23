@@ -1,7 +1,6 @@
-import blackboard
-import sys
-
 def rescore():
+    import blackboard
+    import sys
     blackboard.config.read("data/default.cfg")
     blackboard.config.read(sys.argv[1])
 

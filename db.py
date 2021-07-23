@@ -1,14 +1,17 @@
 import numpy
+import glob
 import re
 from os import path
 import blackboard
 import math
-import psycopg2
 import pepid_utils
 import time
 import os
 import random
 import copy
+import pickle
+
+import helper
 
 class DbSettings():
     def __init__(self):
@@ -54,25 +57,10 @@ def count_db():
 
 def count_peps():
     """
-    Opens the temporary database and counts the total of inserted entries
+    Returns how many entries exist in the processed database
     """
 
-    conn = None
-    while conn is None:
-        try:
-            conn = psycopg2.connect(host="localhost", port="9991", database="postgres")
-        except psycopg2.errors.DeadlockDetected:
-            time.sleep(random.random)
-            continue
-        except psycopg2.DatabaseError as e:
-            raise e
-
-    cursor = conn.cursor()
-    cursor.execute("SELECT MAX(rowid) FROM candidates;")
-    cnt = cursor.fetchone()[0]
-    conn.close()
-
-    return cnt
+    return helper.count(blackboard.DB_PATH, helper.Db)
 
 def pred_rt(cands):
     """
@@ -120,7 +108,7 @@ def theoretical_spectrum(cands):
 
     return ret
 
-def user_processing(conn, start, end):
+def user_processing(start, end):
     """
     Parses the spectrum prediction and rt prediction functions from config
     and applies them to the candidate peptides, adding the result to the corresponding candidate
@@ -144,25 +132,19 @@ def user_processing(conn, start, end):
         import sys
         sys.stderr.write("[db post]: user spectrum prediction function not found, using default function instead\n")
 
-    cursor = conn.cursor()
+    arr = helper.load_db(blackboard.DB_PATH, start=start, end=end)
+ 
+    rts = numpy.array(rt_fn(arr))
+    specs = spec_fn(arr)
+    max_peaks = blackboard.config['search'].getint('max peaks')
+    specs = numpy.array([numpy.pad(numpy.array(x).reshape((-1, 2))[:max_peaks], ((0, max(0, max_peaks - len(x))), (0, 0))) for x in specs])
+    spec_npeaks = numpy.array(list(map(lambda x: numpy.where(x[:,0] == 0)[0][0], specs)))
 
-    cursor.execute("SELECT description, sequence, mods, length, mass FROM candidates WHERE rowid BETWEEN %s AND %s;", [start+1, end+1])
-    cands = cursor.fetchall()
-    cands = [{"description": x[0], "sequence": x[1], "mods": eval(x[2]), "length": x[3], "mass": x[4]} for x in cands]
+    arr['rt'] = rts
+    arr['spec'] = specs
+    arr['npeaks'] = spec_npeaks
 
-    rts = rt_fn(cands)
-    specs = spec_fn(cands)
-
-    for i in range(len(specs)):
-        done = False
-        while not done:
-            try:
-                cursor.execute("UPDATE candidates SET rt = %s, spec = %s WHERE rowid = %s;", [rts[i], repr(specs[i]), start+i+1])
-                conn.commit()
-                done = True
-            except psycopg2.errors.DeadlockDetected:
-                time.sleep(random.random())
-                continue
+    #helper.dump_db(blackboard.DB_PATH, arr, offset=start, erase=False)
 
 def process_entry(description, buff, settings):
     data = []
@@ -218,11 +200,12 @@ def process_entry(description, buff, settings):
                 for var in var_set:
                     mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                     if settings.min_mass <= mass <= settings.max_mass:
-                        data.append([description, peps[j], repr(var), 0.0, len(peps[j]), mass, repr(None)])
+                        data.append([description, peps[j], var, 0.0, len(peps[j]), mass, repr(None)])
 
     return data
 
-def fill_db(conn, start, end):
+# XXX: TODO: in post-processing (see: sorting in search), remove duplicate peptides-mods (doing so requires peptide-order external sort, maybe use single/double argsort)
+def fill_db(start, end):
     """
     Processes database entries, performing digestion and generating variable mods as needed.
     Also applies config-specified mass and length filtering.
@@ -231,13 +214,13 @@ def fill_db(conn, start, end):
     Peptide retention time prediction and peptide spectrum prediction are generated based on config at this stage.
     """
 
-    cursor = conn.cursor()
-
+    batch_size = blackboard.config['performance'].getint('batch size')
     input_file = open(blackboard.config['data']['database'])
 
     settings = DbSettings()
     settings.load_settings()
 
+    data = []
     buff = ""
     description = ""
     entry_id = -1
@@ -245,18 +228,9 @@ def fill_db(conn, start, end):
     for l in input_file:
         if l[0] == ">":
             if start <= entry_id < end:
-                data = process_entry(desc, buff, settings)
-                done = False
-                while not done:
-                    try:
-                        cursor.executemany("INSERT INTO candidates (description, sequence, mods, rt, length, mass, spec) values (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING;", data)
-                        conn.commit()
-                        done = True
-                    except psycopg2.errors.DeadlockDetected:
-                        time.sleep(random.random())
-                        continue
-                    except psycopg2.DatabaseError as e:
-                        raise e
+                peps = process_entry(desc, buff, settings)
+                data.extend(peps)
+                       
             desc = l[1:].strip()
             entry_id += 1
             buff = ""
@@ -265,34 +239,34 @@ def fill_db(conn, start, end):
             if entry_id >= end:
                 break
     if entry_id < end:
-        data = process_entry(desc, buff, settings)
-        done = False
-        while not done:
-            try:
-                cursor.executemany("INSERT INTO candidates (description, sequence, mods, rt, length, mass, spec) values (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING;", data)
-                conn.commit()
-                done = True
-            except psycopg2.errors.DeadlockDetected:
-                time.sleep(random.random())
-                continue
+        peps = process_entry(desc, buff, settings)
+        data.extend(peps)
+
+    seqmods = [d[1] + repr(d[2]) for d in data]
+    uniques = numpy.unique(seqmods, return_index=True)[-1]
+
+    #arr = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "predb{}.npy".format(start)), mode="w+", dtype=blackboard.DB_DTYPE, shape=len(uniques))
+    arr = numpy.zeros(dtype=blackboard.DB_DTYPE, shape=len(uniques))
+    i = 0
+    for k in uniques:
+        d = data[k]
+        if len(data[0]) == 0:
+            continue
+        arr[i]['description'] = d[0]
+        arr[i]['sequence'] = d[1]
+        arr[i]['mods'] = numpy.pad(d[2][:128], (0, max(0, 128 - len(d[2]))))
+        arr[i]['rt'] = d[3]
+        arr[i]['length'] = d[4]
+        arr[i]['mass'] = d[5]
+        arr[i]['meta'] = d[6]
+        i += 1
+    arr = arr[:i]
+    helper.dump_db(os.path.join(blackboard.config['data']['tmpdir'], "predb{}.bin".format(start)), arr, offset=0, erase=True)
+    del arr
 
 def prepare_db():
     """
-    Creates tables in the temporary database which are needed for protein database processing
+    Creates table in the temporary database which is needed for protein database processing
     """
 
-    conn = None
-
-    while conn is None:
-        try:
-            conn = psycopg2.connect(host="localhost", port='9991', database="postgres")
-        except psycopg2.DatabaseError as e:
-            raise e
-
-    os.environ['TMPDIR'] = blackboard.config['data']['tmpdir']
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE candidates (rowid SERIAL, description TEXT, sequence TEXT, mods TEXT, rt REAL, length INTEGER, mass REAL, spec TEXT, UNIQUE(sequence,mods));")
-    cursor.execute("CREATE INDEX cand_idx ON candidates(mass, rt, length);")
-
-    conn.commit()
-    conn.close()
+    pass

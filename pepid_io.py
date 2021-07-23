@@ -1,42 +1,37 @@
 import blackboard
 import os
-import sqlite3
 import time
+import numpy
 
 def write_output():
     """
     Exports search results to csv format as per the config settings.
     """
-    results = None
+    import glob
+    files = glob.glob(os.path.join(blackboard.config['data']['tmpdir'], "results*.npy"))
+    for f in files:
+        results = numpy.memmap(f, dtype=blackboard.RES_DTYPE, shape=blackboard.config['performance'].getint('batch size'), mode='r')
 
-    while results is None:
-        try:
-            results = sqlite3.connect(blackboard.CONN_STR.format(os.path.join(blackboard.TMP_PATH, "tmp.sqlite")), 1)
-        except sqlite3.OperationalError as e:
-            if e.args[0] == 'database is locked':
-                time.sleep(1)
-                continue
-            else:
-                raise e
+        max_cands = blackboard.config['search'].getint('max retained candidates')
 
-    max_cands = blackboard.config['search'].getint('max retained candidates')
+        out_fname = blackboard.config['data']['output']
+        f = open(out_fname, 'w')
 
-    out_fname = blackboard.config['data']['output']
-    f = open(out_fname, 'w')
+        header = list(map(lambda x: x[0], blackboard.RES_DTYPE))
 
-    cursor = results.cursor()
-    cursor.execute("SELECT name FROM (PRAGMA_TABLE_INFO('results'));")
-    header = [x[0] for x in cursor.fetchall()]
+        f.write(";".join(header) + "\n")
 
-    f.write(";".join(header) + "\n")
+        for res in results:
+            if res[header.index('score')] > 0:
+                for i, r in enumerate(res):
+                    if i != header.index('modseq'):
+                        f.write(str(r).replace(";", ","))
+                    else:
+                        f.write("".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(res[header.index('seq')], r)]))
+                    if i < len(res)-1:
+                        f.write(";")
+                    else:
+                        f.write("\n")
+        f.close()
 
-    # Because we order scores DESC, there is no better score than score 0 if score 0 appears within the rank interval selected (i.e. no matches at or beyond that point).
-    cursor.execute("SELECT {} FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY title ORDER BY score DESC) AS RANK FROM results) WHERE SCORE > 0 AND RANK <= ?;".format(",".join(header)), [max_cands])
-    entries = cursor.fetchall()
-
-    for res in entries:
-        f.write(";".join(list(map(lambda x: str(x).replace(";", ","), res))) + "\n")
-    f.close()
-
-    results.close()
-
+    #results.close()
