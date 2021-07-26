@@ -128,8 +128,22 @@ int merge_sort_cmp_db(const void* left, const void* right) {
 
 uint64_t merge_sort_sort(char* fname, uint32_t size) {
     ret r = load(fname, 0, 0);
-    qsort(r.data, r.n / size, size, &merge_sort_cmp_db);
-    uint64_t ret = dump(fname, 0, r.data, r.n, 1);
+    uint64_t base = (r.start / size);
+    idx_arr = calloc(r.n / size, sizeof(uint64_t));
+    for(int i = 0; i < r.n / size; i++) {
+        idx_arr[i] = base + i;
+    }
+    qsort_r(idx_arr, r.n / size, size, &merge_argsort_cmp_db, (void*)r.data);
+    int lgt = strlen(fname);
+    char* full_fname = calloc(lgt + 5, 1);
+    strncpy(full_fname, fname, lgt-1);
+    strncpy(full_name + (lgt-1), ".bin", 4);
+    char* idx_name = calloc(lgt + 4 + 5, 1);
+    strncpy(idx_name, fname, lgt-1);
+    strncpy(idx_name + (lgt-1), "_idx", 4);
+    strncpy(idx_name + (lgt-1)+4, ".bin", 4);
+    uint64_t ret = dump(full_name, 0, r.data, r.n, 1);
+    dump(idx_name, 0, 
     free(r.data);
     return ret;
 }
@@ -222,14 +236,15 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
     task_node head_task;
     head_task.next = NULL;
     head_task.prev = NULL;
-    head_task.task = NULL;
     head_task.task = calloc(sizeof(task), 1);
     head_task.task->done = 1;
+
     task_node* this_task = &head_task;
 
     for(int i = 0; i < nfiles; i++) {
-        fnames_left[i] = calloc(sizeof(char), strlen(fnames[i])+1);
-        strncpy(fnames_left[i], fnames[i], strlen(fnames[i]));
+        int lgt = strlen(fnames[i]);
+        fnames_left[i] = calloc(sizeof(char), lgt+1);
+        strncpy(fnames_left[i], fnames[i], lgt);
         this_task->next = calloc(sizeof(task_node), 1);
         this_task->next->prev = this_task;
         this_task = this_task->next;
@@ -322,7 +337,7 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
 
         for(int i = 0; i < files_left - (files_left % 2); i += 2) {
             new_files[i >> 1] = calloc(sizeof(char), outf_size);
-            sprintf(new_files[i >> 1], "%s%d_%d.bin", final_prefix, i, files_left);
+            sprintf(new_files[i >> 1], "%s%d_%d", final_prefix, i, files_left);
             this_task->next = calloc(sizeof(task_node), 1);
             this_task = this_task->next;
             this_task->task = calloc(sizeof(task), 1);
