@@ -2,6 +2,10 @@ import blackboard
 import ctypes
 import numpy
 
+class Seq(ctypes.Structure):
+    _fields_ = [("seq", ctypes.c_char * 128),
+                ("mods", ctypes.c_float * 128)]
+
 class Query(ctypes.Structure):
     _fields_ = [("title", ctypes.c_char * 1024),
                 ("rt", ctypes.c_float),
@@ -93,7 +97,7 @@ def dump_query(fname, queries, offset=0):
     return lib.dump(fname.encode('ascii'), offset * ctypes.sizeof(Query), q, len(queries) * ctypes.sizeof(Query), 1) // ctypes.sizeof(Query)
 
 def load_query(fname, start=0, end=0):
-    c_data = lib.load(fname.encode('ascii'), start * ctypes.sizeof(Query), (end - start) * ctypes.sizeof(Query))
+    c_data = lib.load(fname.encode('ascii'), start * ctypes.sizeof(Query), (end - start) * ctypes.sizeof(Query), 0)
     ret = c_data_to_npy(c_data, Query, blackboard.QUERY_DTYPE)
     return ret
 
@@ -119,7 +123,7 @@ def load_db(fname, start=0, end=0):
     if(end - start <= 0):
         import sys
         sys.stderr.write("!!! WARN: SIZE TO READ IS 0!! ({} {} {})\n".format(fname, start, end))
-    c_data = lib.load(fname.encode('ascii'), start * ctypes.sizeof(Db), (end - start) * ctypes.sizeof(Db))
+    c_data = lib.load(fname.encode('ascii'), start * ctypes.sizeof(Db), (end - start) * ctypes.sizeof(Db), 0)
     db_ptr = ctypes.cast(c_data.data, ctypes.POINTER(Db))
     try:
         for x in range(int(c_data.n / ctypes.sizeof(Db))):
@@ -134,12 +138,30 @@ def dump_res(fname, res, offset=0):
     r = npy_data_to_c(res, Res)
     return lib.dump(fname.encode('ascii'), ctypes.c_ulonglong(offset * ctypes.sizeof(Res)), r, ctypes.c_ulonglong(len(res) * ctypes.sizeof(Res)), 1) // ctypes.sizeof(Res)
 
+def dump_key(fname, data, offset=0, erase=True):
+    r = (ctypes.c_float * len(data))()
+    for i in range(len(data)):
+        r[i] = data[i]
+    return lib.dump(fname.encode('ascii'), ctypes.c_ulonglong(offset * ctypes.sizeof(ctypes.c_float)), r, ctypes.c_ulonglong(len(data) * ctypes.sizeof(ctypes.c_float)), 1 if erase else 0) // ctypes.sizeof(ctypes.c_float)
+
+def seq_to_c(data):
+    ret = (Seq * len(data))()
+    for d, r in zip(data, ret):
+        r.seq = d['seq'].encode('ascii')
+        for j in range(128):
+            r.mods[j] = d['mods'][j]
+    return ret
+
+def dump_seq(fname, data, offset=0, erase=True):
+    r = seq_to_c(data)
+    return lib.dump(fname.encode('ascii'), ctypes.c_ulonglong(offset * (ctypes.sizeof(ctypes.c_float) + 1) * 128), r, ctypes.c_ulonglong(len(data) * (ctypes.sizeof(ctypes.c_float) + 1) * 128), 1 if erase else 0) // ((ctypes.sizeof(ctypes.c_float) + 1) * 128)
+
 def load_res(fname, start=0, end=0):
-    c_data = lib.load(fname.encode('ascii'), start * ctypes.sizeof(Res), (end - start) * ctypes.sizeof(Res))
+    c_data = lib.load(fname.encode('ascii'), start * ctypes.sizeof(Res), (end - start) * ctypes.sizeof(Res), 0)
     ret = c_data_to_npy(c_data, Res, blackboard.RES_DTYPE)
     return ret
 
-def sort(fnames, out, klass, key='mass'):
+def sort(fnames, out, klass):
     flist = (ctypes.c_char_p * len(fnames))()
     for i in range(len(fnames)):
         flist[i] = ctypes.c_char_p(fnames[i].encode('ascii'))

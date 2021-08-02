@@ -57,6 +57,7 @@ typedef struct {
 
 typedef struct {
     uint64_t n;
+    uint64_t start;
     void* data;
 } ret;
 
@@ -68,6 +69,8 @@ typedef struct {
 typedef struct {
     char* fname1;
     char* fname2;
+    uint64_t start1;
+    uint64_t start2;
     char* fname_out;
     uint64_t size;
     uint64_t batch_size;
@@ -75,6 +78,7 @@ typedef struct {
 
 typedef struct {
     char* fname;
+    uint64_t start;
     uint64_t size;
 } sort_payload;
 
@@ -108,13 +112,17 @@ typedef struct {
 
 typedef struct {
     char* fname;
+    char* fname_idx;
     uint64_t idx;
+    uint64_t start;
 } indexed_file;
 
 typedef struct {
     void* data;
+    uint64_t* data_idx;
     uint32_t batch_size;
     uint32_t elt_size;
+    uint32_t idx_elt_size;
     uint64_t start;
     uint64_t end;
     uint64_t mark;
@@ -124,15 +132,10 @@ typedef struct {
 } db_buffer;
 
 uint64_t dump(char*, uint64_t, void*, uint64_t, char);
-ret load(char*, uint64_t, uint64_t);
+ret load(char*, uint64_t, uint64_t, uint64_t);
 
-void merge_sort_merge(char*, char*, char*, uint32_t, uint32_t);
-uint64_t merge_sort_sort(char*, uint32_t);
 uint64_t merge_sort(uint32_t, char**, char*, uint32_t, uint32_t, uint32_t, uint32_t);
 
 range find_data(char*, uint64_t, uint64_t, float, float);
 
 thread_pool pool;
-
-void push_job(task*);
-task* try_pop_job();

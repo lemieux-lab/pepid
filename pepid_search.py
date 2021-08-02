@@ -243,9 +243,14 @@ def run():
         batch_start = 0
         n_peps = 0
         if blackboard.config['pipeline'].getboolean('db processing'):
+            import ctypes
             log.info("DB: Mergesort...")
-            n_peps = helper.sort([os.path.join(blackboard.config['data']['tmpdir'], "predb{}.bin".format(i * batch_size)) for i in range(n_db_batches)], blackboard.DB_PATH, helper.Db, key='mass')
+            n_peps = helper.sort([os.path.join(blackboard.config['data']['tmpdir'], "key{}".format(i * batch_size)) for i in range(n_db_batches)], blackboard.DB_FNAME.rsplit(".bin", 1)[0] + "_key", ctypes.c_float)
             log.info("DB: Mergesort complete")
+            log.info("DB: Precompute extra data...")
+            log.warning("DB: NOT IMPLEMENTED")
+            sys.exit(-1)
+            log.info("DB: Data precomputed")
         else:
             n_peps = db.count_peps()
 

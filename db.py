@@ -246,22 +246,18 @@ def fill_db(start, end):
     uniques = numpy.unique(seqmods, return_index=True)[-1]
 
     #arr = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "predb{}.npy".format(start)), mode="w+", dtype=blackboard.DB_DTYPE, shape=len(uniques))
-    arr = numpy.zeros(dtype=blackboard.DB_DTYPE, shape=len(uniques))
+    arr = numpy.zeros(dtype=[('mass', 'float32'), ('seq', 'unicode', 128), ('mods', 'float32', 128)], shape=len(uniques))
     i = 0
     for k in uniques:
         d = data[k]
         if len(data[0]) == 0:
             continue
-        arr[i]['description'] = d[0]
-        arr[i]['sequence'] = d[1]
+        arr[i]['seq'] = d[1]
         arr[i]['mods'] = numpy.pad(d[2][:128], (0, max(0, 128 - len(d[2]))))
-        arr[i]['rt'] = d[3]
-        arr[i]['length'] = d[4]
         arr[i]['mass'] = d[5]
-        arr[i]['meta'] = d[6]
         i += 1
-    arr = arr[:i]
-    helper.dump_db(os.path.join(blackboard.config['data']['tmpdir'], "predb{}.bin".format(start)), arr, offset=0, erase=True)
+    helper.dump_key(os.path.join(blackboard.config['data']['tmpdir'], "key{}.bin".format(start)), arr['mass'], offset=0, erase=True)
+    helper.dump_seq(os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(start)), arr[['seq', 'mods']], offset=0, erase=True)
     del arr
 
 def prepare_db():
