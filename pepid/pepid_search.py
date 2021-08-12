@@ -205,6 +205,10 @@ def run():
     import search
 
     try:
+        log.info("Phases to run: | " + ("DB Processing | " if blackboard.config['pipeline'].getboolean('db processing') else "") +
+                                    ("Postprocessing | " if blackboard.config['pipeline'].getboolean('postprocessing') else "") +
+                                    ("Search | " if blackboard.config['pipeline'].getboolean('search') else "") +
+                                    ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else ""))
         log.info("Preparing Input Databases...")
         db.prepare_db()
         queries.prepare_queries()
@@ -243,46 +247,68 @@ def run():
         batch_start = 0
         n_peps = 0
         if blackboard.config['pipeline'].getboolean('db processing'):
-            import ctypes
-            log.info("DB: Mergesort...")
-            n_peps = helper.sort([os.path.join(blackboard.config['data']['tmpdir'], "key{}".format(i * batch_size)) for i in range(n_db_batches)], blackboard.DB_FNAME.rsplit(".bin", 1)[0] + "_key", ctypes.c_float)
-            log.info("DB: Mergesort complete")
-            log.info("DB: Precompute extra data...")
-            log.warning("DB: NOT IMPLEMENTED")
-            sys.exit(-1)
-            log.info("DB: Data precomputed")
+            log.info("DB: Sorted Key Index...")
+            n_peps = helper.sort([os.path.join(blackboard.config['data']['tmpdir'], "key{}".format(i * batch_size)) for i in range(n_db_batches)], blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index", helper.KEY_TYPE)
+
+            out_seq_fname = blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_seq.bin"
+            _ = open(out_seq_fname, "wb")
+            _.close()
+            for f in [os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(i*batch_size)) for i in range(n_db_batches)]:
+                os.system("cat '{}' >> '{}'".format(f, out_seq_fname)) # XXX
+
+            n_db = n_peps
+            n_db_batches = math.ceil(n_db / batch_size)
+
+            # Ensure blank file exists
+            f = open(blackboard.DB_PATH, "wb")
+            f.close()
+
+            log.info("DB: Sort values based on index...")
+            helper.reorder(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_idx.bin", blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_seq.bin", blackboard.DB_PATH)
+            os.remove(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_idx.bin")
+            log.info("DB: Data sorted")
+
+            dbspec = [("db_node.py", dbnodes, n_db_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                            [struct.pack("!cQQc", bytes([0x03]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
+
+            handle_nodes("Fill DB Metadata", dbspec)
         else:
             n_peps = db.count_peps()
 
         n_db = n_peps
         n_db_batches = math.ceil(n_db / batch_size)
 
-        if qnodes < 0 or dbnodes < 0:
-            log.fatal("post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
-            sys.exit(2)
+        if blackboard.config['pipeline'].getboolean('postprocessing'):
+            if qnodes < 0 or dbnodes < 0:
+                log.fatal("post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
+                sys.exit(2)
 
-        qspec = [("queries_node.py", qnodes, n_query_batches,
-                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
-                        [struct.pack("!cQQc", bytes([0x02]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
-                        [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
-        dbspec = [("db_node.py", dbnodes, n_db_batches,
-                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                        [struct.pack("!cQQc", bytes([0x02]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
-                        [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
+            qspec = [("queries_node.py", qnodes, n_query_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
+                            [struct.pack("!cQQc", bytes([0x02]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
+            dbspec = [("db_node.py", dbnodes, n_db_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                            [struct.pack("!cQQc", bytes([0x02]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
 
-        handle_nodes("Input Postprocessing", qspec + dbspec)
+            handle_nodes("Input Postprocessing", qspec + dbspec)
 
-        n_search_batches = math.ceil(n_queries / batch_size)
-        sspec = [("search_node.py", snodes, n_search_batches,
-                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
-                        [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_search_batches)],
-                        [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(snodes)])]
+        if blackboard.config['pipeline'].getboolean('search'):
+            n_search_batches = math.ceil(n_queries / batch_size)
+            sspec = [("search_node.py", snodes, n_search_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
+                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_search_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(snodes)])]
 
-        handle_nodes("Search", sspec)
+            handle_nodes("Search", sspec)
 
-        log.info("Search complete. Post-processing results...")
-        processing.post_process()
-        log.info("Done. Saving results to {}.".format(blackboard.config['data']['output']))
+        if blackboard.config['pipeline'].getboolean('postprocess search'):
+            log.info("Search complete. Post-processing results...")
+            processing.post_process()
+            log.info("Done. Saving results to {}.".format(blackboard.config['data']['output']))
         pepid_io.write_output()
 
     finally:
@@ -290,11 +316,13 @@ def run():
         if len(blackboard.TMP_PATH) > 0:
             os.system("rm -rf {}".format(blackboard.TMP_PATH))
         if len(blackboard.config['data']['tmpdir']) > 0:
+            import glob
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepidtmp*")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.npy")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "predb*.bin")))
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*_*.bin")))
+            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "seq*.bin")))
+            #os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*_*.bin")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.pkl")))
             # Note: db not removed in case it is to be reused.
 

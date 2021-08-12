@@ -44,6 +44,12 @@ typedef struct {
 } db;
 
 typedef struct {
+    char desc[1024];
+    char seq[128];
+    float mods[128];
+} predb;
+
+typedef struct {
     char title[1024];
     float rt;
     uint32_t charge;
@@ -69,8 +75,6 @@ typedef struct {
 typedef struct {
     char* fname1;
     char* fname2;
-    uint64_t start1;
-    uint64_t start2;
     char* fname_out;
     uint64_t size;
     uint64_t batch_size;
@@ -110,32 +114,18 @@ typedef struct {
     char die;
 } thread_pool;
 
-typedef struct {
-    char* fname;
-    char* fname_idx;
-    uint64_t idx;
-    uint64_t start;
-} indexed_file;
-
-typedef struct {
-    void* data;
-    uint64_t* data_idx;
-    uint32_t batch_size;
-    uint32_t elt_size;
-    uint32_t idx_elt_size;
-    uint64_t start;
-    uint64_t end;
-    uint64_t mark;
-    char done;
-    indexed_file* out;
-    indexed_file* in;
-} db_buffer;
-
 uint64_t dump(char*, uint64_t, void*, uint64_t, char);
-ret load(char*, uint64_t, uint64_t, uint64_t);
+ret load(char*, uint64_t, uint64_t, uint64_t, uint64_t);
 
 uint64_t merge_sort(uint32_t, char**, char*, uint32_t, uint32_t, uint32_t, uint32_t);
 
 range find_data(char*, uint64_t, uint64_t, float, float);
+
+void reorder(char*, char*, char*, uint64_t, uint64_t);
+
+res* make_res(double*, char**, char*, float, float, int, db*, int);
+
+void free_ret(ret);
+void free_ptr(void*);
 
 thread_pool pool;

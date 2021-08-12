@@ -18,23 +18,67 @@ void reorder_key(float* data, uint64_t* indices, int n, uint64_t offset) {
     }
 }
 
+// TODO: parallelize
+// reorders the seq file entries in fname_tgt as per the indices in fname_idx
+void reorder(char* fname_idx, char* fname_tgt, char* out, uint64_t out_size, uint64_t batch_size) {
+    db* buff = calloc(out_size, batch_size);
+    uint64_t* idx = NULL;
+    predb* val = NULL;
+
+    FILE* f = fopen(fname_idx, "rb");
+    fseeko(f, 0, SEEK_END);
+    uint64_t idx_size = ftello(f);
+    uint64_t fsize = idx_size / sizeof(uint64_t); 
+    fclose(f);
+
+    uint64_t end_idx = batch_size;
+
+    for(uint64_t i = 0; (i < fsize) && (i % batch_size < end_idx); i++) {
+        if(i % batch_size == 0) {
+            if(i != 0) {
+                for(uint64_t j = 0; j < batch_size; j++) {
+                    dump(out, idx[j] * out_size, &(buff[j]), out_size, 0);
+                }
+            }
+            ret ri = load(fname_idx, i * sizeof(uint64_t), sizeof(uint64_t), batch_size, 0);
+            ret rv = load(fname_tgt, i * sizeof(predb), sizeof(predb), batch_size, 0);
+            end_idx = ri.n / sizeof(uint64_t);
+
+            free(idx); free(val);
+            idx = (uint64_t*)(ri.data);
+            val = (predb*)(rv.data);
+        }
+
+        if(i % batch_size >= end_idx) {
+            for(uint64_t j = 0; j < end_idx; j++) {
+                dump(out, idx[j] * out_size, &(buff[j]), out_size, 0);
+            }
+            break;
+        } else {
+            memcpy(buff[i % batch_size].description, val[i % batch_size].desc, 1024*sizeof(char));
+            memcpy(buff[i % batch_size].sequence, val[i % batch_size].seq, 128*sizeof(char));
+            memcpy(buff[i % batch_size].mods, val[i % batch_size].mods, 128*sizeof(float));
+        }
+    }
+
+    free(buff); free(val); free(idx);
+}
+
 uint64_t dump(char* fname, uint64_t file_offset, void* data, uint64_t total_size, char erase) {
     FILE* outf = fopen(fname, erase? "wb" : "r+b");
     fseeko(outf, file_offset, SEEK_SET);
-    printf("DUMP! %s %llu %p %llu\n", fname, total_size, data, file_offset);
-    printf("D> %f\n", *((float*)(data + total_size - 4)));
     uint64_t written = fwrite(data, 1, total_size, outf);
-    printf("DUMPED, %llu!\n", written);
     fclose(outf);
     return written;
 }
 
-ret load(char* fname, uint64_t offset, uint64_t size, uint64_t start) {
+ret load(char* fname, uint64_t offset, uint64_t elt_size, uint64_t n_elts, uint64_t start) {
     FILE* inf = fopen(fname, "rb");
 
     struct stat s;
     fstat(fileno(inf), &s);
 
+    uint64_t size = elt_size * n_elts;
     uint64_t size_to_read = (size == 0? s.st_size - offset:MIN(size,s.st_size - offset));
 
     fseeko(inf, offset, SEEK_SET);
@@ -43,165 +87,130 @@ ret load(char* fname, uint64_t offset, uint64_t size, uint64_t start) {
 
     fclose(inf);
 
-    return (ret){ .n = actually_read, .data = out, .start = offset + start };
+    return (ret){ .n = actually_read, .data = out, .start = (offset / elt_size + start) };
 }
 
-void dump_buffer(db_buffer* buffer) {
-    // idx marks 1 past the last index to dump.
-    if((buffer->in->idx > buffer->mark) && ((buffer->in->idx - buffer->start) <= buffer->end)) {
-        printf("dump_buffer: ");
-        printf("%s ", buffer->out->fname);
-        printf("%llu x %llu ", buffer->out->idx, buffer->elt_size);
-        printf("[ %p + ( %llu - %llu + 1 ) ", buffer->data, buffer->mark, buffer->start);
-        printf(" ( / %llu )) * %llu ]\n", buffer->end, buffer->elt_size);
-        dump(buffer->out->fname, buffer->out->idx*buffer->elt_size, buffer->data + (buffer->mark - buffer->start) * buffer->elt_size, (buffer->in->idx - buffer->mark + 1) * buffer->elt_size,  0);
-        printf("... dumped data\n");
-        printf("-> %s %llu (%llu) %p %llu %llu %llu\n", buffer->out->fname_idx, buffer->out->idx, buffer->idx_elt_size, buffer->data_idx, buffer->mark, buffer->start, buffer->end);
-        dump(buffer->out->fname_idx, buffer->out->idx*buffer->idx_elt_size, buffer->data_idx + (buffer->mark - buffer->start) * buffer->idx_elt_size, (buffer->in->idx - buffer->mark + 1) * buffer->idx_elt_size,  0);
-        printf("... dumped indices\n");
-        buffer->out->idx += (buffer->in->idx - buffer->mark + 1);
-        buffer->mark = buffer->in->idx + 1;
-    }
-}
-
-void buffer_next(db_buffer* buffer) {
-    buffer->done = (buffer->end > 0) && ((buffer->end - buffer->start) < buffer->batch_size) && (buffer->in->idx >= buffer->end);
-    if(!(buffer->done)) {
-        if(buffer->in->idx >= buffer->end) {
-            dump_buffer(buffer);
-            ret r = load(buffer->in->fname, buffer->in->idx*buffer->elt_size, buffer->elt_size*buffer->batch_size, buffer->in->start);
-            ret r_idx = load(buffer->in->fname_idx, buffer->in->idx*buffer->idx_elt_size, buffer->idx_elt_size*buffer->batch_size, buffer->in->start);
-            printf("LATEST IDX: %llu %llu\n", r_idx.n, r_idx.n / sizeof(uint64_t));
-            free(buffer->data);
-            free(buffer->data_idx);
-            buffer->data = r.data;
-            buffer->data_idx = r_idx.data;
-            buffer->start = buffer->in->idx;
-            buffer->end = (r.n / buffer->elt_size) + buffer->start;
-        } else {
-            buffer->in->idx++;
-        } 
+char* make_fname(char* src, char idx) {
+    int lgt = strlen(src);
+    char* ret = calloc(lgt + 1 + 4 + (idx? 4 : 0), 1);
+    if(!idx) {
+        sprintf(ret, "%s.bin", src);
     } else {
-        return;
+        sprintf(ret, "%s_idx.bin", src);
     }
+    return ret;
 }
 
-void merge_sort_merge(char* fname1, char* fname2, uint64_t start1, uint64_t start2, char* out, uint32_t size, uint32_t batch_size) {
-    printf("%s + %s -> %s (%d, %d x %d (%d))\n", fname1, fname2, out, start1, start2, size, batch_size);
-    int lgt1 = strlen(fname1);
-    char* full_name1 = calloc(lgt1 + 5, 1);
-    sprintf(full_name1, "%s.bin", fname1);
-    char* idx_name1 = calloc(lgt1 + 4 + 5, 1);
-    sprintf(idx_name1, "%s_idx.bin", fname1);
+void merge_sort_merge(char* fname1, char* fname2, char* out, uint32_t size, uint32_t batch_size) {
+    char* f1 = make_fname(fname1, 0);
+    char* i1 = make_fname(fname1, 1);
+    char* f2 = make_fname(fname2, 0);
+    char* i2 = make_fname(fname2, 1);
+    char* fo = make_fname(out, 0);
+    char* io = make_fname(out, 1);
 
-    int lgt2 = strlen(fname2);
-    char* full_name2 = calloc(lgt2 + 5, 1);
-    sprintf(full_name2, "%s.bin", fname2);
-    char* idx_name2 = calloc(lgt2 + 4 + 5, 1);
-    sprintf(idx_name2, "%s_idx.bin", fname2);
+    void* buff_out = calloc(size, batch_size);
+    void* buff1 = NULL;
+    void* buff2 = NULL;
 
-    int lgt_out = strlen(out);
-    char* full_name_out = calloc(lgt_out + 5, 1);
-    sprintf(full_name_out, "%s.bin", out);
-    char* idx_name_out = calloc(lgt_out + 4 + 5, 1);
-    sprintf(idx_name_out, "%s_idx.bin", out);
+    void* buff_out_idx = calloc(sizeof(uint64_t), batch_size);
+    void* buff1_idx = NULL;
+    void* buff2_idx = NULL;
 
-    FILE* outf = fopen(full_name_out, "wb");
-    FILE* idx_outf = fopen(idx_name_out, "wb");
-    fclose(outf); // just create the file, will be filled later
-    fclose(idx_outf); // just create the file, will be filled later
+    uint64_t i = 0;
+    uint64_t j = 0;
+    uint64_t k = 0;
 
-    printf("Got fnames, created files...\n");
+    FILE* data1 = fopen(f1, "rb");
+    FILE* data2 = fopen(f2, "rb");
 
-    db_buffer buff1;
-    db_buffer buff2;
-
-    buff1.elt_size = size;
-    buff1.idx_elt_size = sizeof(uint64_t);
-    buff2.elt_size = size;
-    buff2.idx_elt_size = sizeof(uint64_t);
-    buff1.batch_size = batch_size;
-    buff2.batch_size = batch_size;
-    indexed_file in1 = (indexed_file){ .fname = full_name1, .fname_idx = idx_name1, .idx = 0, .start = start1 };
-    indexed_file in2 = (indexed_file){ .fname = full_name2, .fname_idx = idx_name2, .idx = 0, .start = start2 };
-    indexed_file out_obj = (indexed_file){ .fname = full_name_out, .fname_idx = idx_name_out, .idx = 0, .start = 0 };
-    buff1.in = &in1;
-    buff2.in = &in2;
-    buff1.out = &out_obj;
-    buff2.out = &out_obj;
-    buff1.end = 0;
-    buff2.end = 0;
-    buff1.start = 0;
-    buff2.start = 0;
-    buff1.mark = 0;
-    buff2.mark = 0;
-    buff1.data = NULL;
-    buff1.data_idx = NULL;
-    buff2.data = NULL;
-    buff2.data_idx = NULL;
-    buff1.done = 0;
-    buff2.done = 0;
-
-    buffer_next(&buff1);
-    buffer_next(&buff2);
-    float this1 = ((float*)(buff1.data))[buff1.in->idx - buff1.start];
-    float this2 = ((float*)(buff2.data))[buff2.in->idx - buff2.start];
-
-
-    printf("task init done\n");
-
-    while(!buff1.done || !buff2.done) {
-        if(buff2.done) {
-            while(!buff1.done) {
-                printf("!buff1.done BEEP\n");
-                buffer_next(&buff1);
-            }
-            dump_buffer(&buff1);
-        } else if(buff1.done) {
-            while(!buff2.done) {
-                printf("!buff2.done BOOP\n");
-                buffer_next(&buff2);
-            }
-            dump_buffer(&buff2);
-        } else if(!buff1.done && !buff2.done) {
-            printf("A1: %lld - %lld\n", buff1.in->idx, buff1.start);
-            printf("A2: %lld - %lld\n", buff2.in->idx, buff2.start);
-                printf("-> %f %f\n", this1, this2);
-            buffer_next(&buff1);
-            buffer_next(&buff2);
-            printf("...next\n");
-
-            while((!buff1.done) && (this1 <= this2)) {
-                this1 = ((float*)(buff1.data))[buff1.in->idx - buff1.start];
-                buffer_next(&buff1);
-            }
-            printf("dump1\n");
-            dump_buffer(&buff1);
-
-            while((!buff2.done) && (this2 < this1)) {
-                this2 = ((float*)(buff2.data))[buff2.in->idx - buff2.start];
-                buffer_next(&buff2);
-            }
-            printf("Ready dump2\n");
-            dump_buffer(&buff2);
-            printf("dump2\n");
-
-            this1 = ((float*)(buff1.data))[buff1.in->idx - buff1.start];
-            this2 = ((float*)(buff2.data))[buff2.in->idx - buff2.start];
-        } else { break; }
+    {
+    FILE* fo_file = fopen(fo, "wb");
+    FILE* io_file = fopen(io, "wb");
+    fclose(io_file);
+    fclose(fo_file);
     }
 
-    printf("%s done merge!\n", buff1.out->fname);
+    fseeko(data1, 0, SEEK_END);
+    uint64_t f1_size = ftello(data1) / size;
+    fclose(data1);
 
-    free(full_name_out);
-    free(idx_name_out);
-    free(full_name1);
-    free(idx_name1);
-    free(full_name2);
-    free(idx_name2);
+    fseeko(data2, 0, SEEK_END);
+    uint64_t f2_size = ftello(data2) / size;
+    fclose(data2);
 
-    free(buff1.data);
-    free(buff2.data);
+    uint64_t f1_start = 0;
+    uint64_t f2_start = 0;
+    uint64_t fo_start = 0;
+
+    while((i < f1_size) || (j < f2_size)) {
+        if((buff1 == NULL) || ((i - f1_start) >= batch_size)) {
+            ret r = load(f1, i * size, size, batch_size, 0);
+            ret r_idx = load(i1, i * sizeof(uint64_t), sizeof(uint64_t), batch_size, 0);
+            free(buff1); free(buff1_idx);
+            buff1 = r.data;
+            buff1_idx = r_idx.data;
+            f1_start = i;
+        }
+        if((buff2 == NULL) || ((j - f2_start) >= batch_size)) {
+            ret r = load(f2, j * size, size, batch_size, 0);
+            ret r_idx = load(i2, j * sizeof(uint64_t), sizeof(uint64_t), batch_size, 0);
+            free(buff2); free(buff2_idx);
+            buff2 = r.data;
+            buff2_idx = r_idx.data;
+            f2_start = j;
+        }
+        while((i - f1_start < batch_size) && (j - f2_start < batch_size) && (i < f1_size || j < f2_size)) {
+            if(i >= f1_size) {
+                float v2 = ((float*)buff2)[j - f2_start];
+                uint64_t u2 = ((uint64_t*)buff2_idx)[j - f2_start];
+                ((float*)buff_out)[k - fo_start] = v2;
+                ((uint64_t*)buff_out_idx)[k - fo_start] = u2;
+                j++;
+            } else if(j >= f2_size) {
+                float v1 = ((float*)buff1)[i - f1_start];
+                uint64_t u1 = ((uint64_t*)buff1_idx)[i - f1_start];
+                ((float*)buff_out)[k - fo_start] = v1;
+                ((uint64_t*)buff_out_idx)[k - fo_start] = u1;
+                i++;
+            } else {
+                float v1 = ((float*)buff1)[i - f1_start];
+                float v2 = ((float*)buff2)[j - f2_start];
+                uint64_t u1 = ((uint64_t*)buff1_idx)[i - f1_start];
+                uint64_t u2 = ((uint64_t*)buff2_idx)[j - f2_start];
+                
+                if(v1 <= v2) {
+                    ((float*)buff_out)[k - fo_start] = v1;
+                    ((uint64_t*)buff_out_idx)[k - fo_start] = u1;
+                    i++;
+                } else {
+                    ((float*)buff_out)[k - fo_start] = v2;
+                    ((uint64_t*)buff_out_idx)[k - fo_start] = u2;
+                    j++;
+                }
+            }
+
+            k++;
+            if((k - fo_start) >= batch_size) {
+                dump(fo, fo_start * size, buff_out, (k - fo_start) * size,  0);
+                dump(io, fo_start * sizeof(uint64_t), buff_out_idx, (k - fo_start) * sizeof(uint64_t),  0);
+                fo_start = k;
+            }
+        }
+    }
+
+    if(k > fo_start) {
+        dump(fo, fo_start * size, buff_out, (k - fo_start) * size,  0);
+        dump(io, fo_start * sizeof(uint64_t), buff_out_idx, (k - fo_start) * sizeof(uint64_t),  0);
+    }
+
+    free(buff1); free(buff1_idx);
+    free(buff2); free(buff2_idx);
+    free(buff_out); free(buff_out_idx);
+
+    free(f1); free(i1);
+    free(f2); free(i2);
+    free(fo); free(io);
 }
 
 int merge_sort_cmp_db(const void* left, const void* right) {
@@ -223,13 +232,10 @@ int merge_argsort_cmp_db(const void* left, const void* right, void* arg) {
 }
 
 uint64_t merge_sort_sort(char* fname, uint32_t size, uint64_t start) {
-    int lgt = strlen(fname);
-    char* full_name = calloc(lgt + 5, 1);
-    sprintf(full_name, "%s.bin", fname);
-    char* idx_name = calloc(lgt + 4 + 5, 1);
-    sprintf(idx_name, "%s_idx.bin", fname);
+    char* full_name = make_fname(fname, 0);
+    char* idx_name = make_fname(fname, 1);
 
-    ret r = load(full_name, 0, 0, start);
+    ret r = load(full_name, 0, size, 0, start);
 
     uint64_t base = r.start;
     uint64_t* idx_arr = calloc(r.n / size, sizeof(uint64_t));
@@ -240,7 +246,7 @@ uint64_t merge_sort_sort(char* fname, uint32_t size, uint64_t start) {
     qsort_r(idx_arr, r.n / size, sizeof(uint64_t), &merge_argsort_cmp_db, (void*)(&r));
     reorder_key((float*)(r.data), idx_arr, r.n / size, base);
 
-    uint64_t ret = dump(full_name, 0, r.data, r.n, 1);
+    uint64_t dump_size = dump(full_name, 0, r.data, r.n, 1);
     dump(idx_name, 0, idx_arr, (r.n / size) * sizeof(uint64_t), 1);
 
     free(r.data);
@@ -248,7 +254,7 @@ uint64_t merge_sort_sort(char* fname, uint32_t size, uint64_t start) {
     free(idx_name);
     free(full_name);
 
-    return ret;
+    return dump_size;
 }
 
 void push_job(task* task) {
@@ -283,7 +289,6 @@ task* try_pop_job() {
 }
 
 void* pool_task(void* arg) {
-    //int thread_num = (int)arg; // hack!
     while(!pool.die) {
         task* next_task = try_pop_job();
         if(next_task != NULL) { 
@@ -297,15 +302,11 @@ void* pool_task(void* arg) {
                 }
                 case JOB_MERGE: {
                     merge_payload* payload = (merge_payload*)(next_task->payload);
-                    merge_sort_merge(payload->fname1, payload->fname2, payload->start1, payload->start2, payload->fname_out, payload->size, payload->batch_size);
-                    char* full_fname1 = calloc(strlen(payload->fname1) + 1 + 4, 1);
-                    char* full_fname2 = calloc(strlen(payload->fname2) + 1 + 4, 1);
-                    char* full_idx1 = calloc(strlen(payload->fname1) + 1 + 4 + 4, 1);
-                    char* full_idx2 = calloc(strlen(payload->fname2) + 1 + 4 + 4, 1);
-                    sprintf(full_fname1, "%s.bin", payload->fname1);
-                    sprintf(full_fname2, "%s.bin", payload->fname2);
-                    sprintf(full_idx1, "%s_idx.bin", payload->fname1);
-                    sprintf(full_idx2, "%s_idx.bin", payload->fname2);
+                    merge_sort_merge(payload->fname1, payload->fname2, payload->fname_out, payload->size, payload->batch_size);
+                    char* full_fname1 = make_fname(payload->fname1, 0);
+                    char* full_fname2 = make_fname(payload->fname2, 0);
+                    char* full_idx1 = make_fname(payload->fname1, 1);
+                    char* full_idx2 = make_fname(payload->fname2, 1);
                     int status1 = remove(full_fname1); int status2 = remove(full_fname2); int status3 = remove(full_idx1); int status4 = remove(full_idx2);
                     if(!status1 && !status2 && !status3 && !status4) {
                         next_task->done = 1;
@@ -333,7 +334,6 @@ uint64_t count(char* fname, uint64_t size) {
 }
 
 uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, uint32_t n_threads, uint32_t batch_size, uint32_t n_merge_threads) {
-    printf("mergesort\n");
     pool.threads = calloc(sizeof(pthread_t), n_threads);
     pool.n_threads = n_threads;
     pool.work_tail = &(pool.work_queue);
@@ -370,11 +370,10 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
         ((sort_payload*)(this_task->task->payload))->start = start;
         ((sort_payload*)(this_task->task->payload))->size = size;
 
-        char* this_fname = calloc(lgt+1+4, sizeof(char));
-        sprintf(this_fname, "%s.bin", fnames[i]);
+        char* this_fname = make_fname(fnames[i], 0);
         FILE* f = fopen(this_fname, "rb");
         fseeko(f, 0, SEEK_END);
-        start += ftello(f);
+        start += ftello(f) / size;
         fclose(f);
         free(this_fname);
 
@@ -456,13 +455,9 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
         prefix = strtok(NULL, "/");
     }
 
-    printf("preparing to merge\n");
-    uint64_t leftovers_start = 0;
-    char has_leftovers = 0;
     while(files_left > 1) {
         this_task = &head_task;
         char** new_files = calloc(sizeof(char*), (files_left + 1) >> 1);
-        uint64_t start = 0;
 
         for(int i = 0; i < files_left - (files_left % 2); i += 2) {
             new_files[i >> 1] = calloc(sizeof(char), outf_size);
@@ -471,41 +466,16 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
             this_task = this_task->next;
             this_task->task = calloc(sizeof(task), 1);
 
-            int lgt = strlen(fnames_left[i]);
-            char* bin_fname1 = calloc(sizeof(char), lgt+1+4);
-            char* bin_fname2 = calloc(sizeof(char), lgt+1+4);
-            sprintf(bin_fname1, "%s.bin", fnames_left[i]);
-            sprintf(bin_fname2, "%s.bin", fnames_left[i+1]);
-
-            FILE* f1 = fopen(bin_fname1, "rb");
-            FILE* f2 = fopen(bin_fname2, "rb");
-
-            fseeko(f1, 0, SEEK_END);
-            fseeko(f2, 0, SEEK_END);
-            uint64_t fsize1 = ftello(f1);
-            uint64_t fsize2 = ftello(f2);
-
-            fclose(f1);
-            fclose(f2);
-
-            free(bin_fname1);
-            free(bin_fname2);
-
             this_task->task->payload = calloc(sizeof(merge_payload), 1);
             ((merge_payload*)(this_task->task->payload))->fname1 = fnames_left[i];
             ((merge_payload*)(this_task->task->payload))->fname2 = fnames_left[i+1];
-            ((merge_payload*)(this_task->task->payload))->start1 = start;
-            ((merge_payload*)(this_task->task->payload))->start2 = ((i == files_left - 2) && has_leftovers)? leftovers_start : start + fsize1 / size;
             ((merge_payload*)(this_task->task->payload))->fname_out = new_files[i >> 1];
             ((merge_payload*)(this_task->task->payload))->size = size;
             ((merge_payload*)(this_task->task->payload))->batch_size = batch_size;
 
-            start += fsize2;
-
             this_task->task->type = JOB_MERGE;
             push_job(this_task->task);
         }
-        printf("Merge tasks all pushed!\n");
 
         for(;;) {
             this_task = &head_task;
@@ -525,15 +495,11 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
         long n_curr_files = files_left;
         if((files_left > 1) && (files_left % 2 != 0)) { // If off by one, just copy the last fname across to the next round
             // this also requires adjusting the resulting `files_left' for the next round.
-            has_leftovers = 1;
-            leftovers_start = start;
             int tgt_idx = ((files_left-1) >> 1);
             long last_size = strlen(fnames_left[files_left-1]);
             new_files[tgt_idx] = calloc(sizeof(char), last_size+1);
             strncpy(new_files[tgt_idx], fnames_left[files_left-1], last_size);
             files_left += 2; // so that after division, we're +1 to account for the last file   
-        } else {
-            has_leftovers = 0;
         }
         files_left >>= 1;
 
@@ -548,20 +514,16 @@ uint64_t merge_sort(uint32_t nfiles, char** fnames, char* out, uint32_t size, ui
     free(final_prefix);
     free(fname_cpy);
 
-    int lgt = strlen(fnames_left[0]);
-    char* final_name = calloc(lgt + 5, 1);
-    sprintf(final_name, "%s.bin", fnames_left[0]);
-    char* final_idx = calloc(lgt + 4 + 5, 1);
-    sprintf(final_idx, "%s_idx.bin", fnames_left[0]);
+    char* final_name = make_fname(fnames_left[0], 0);
+    char* final_idx = make_fname(fnames_left[0], 1);
 
-    lgt = strlen(out);
-    char* real_out = calloc(lgt + 5, 1);
-    sprintf(real_out, "%s.bin", out);
-    char* out_idx = calloc(lgt + 4 + 5, 1);
-    sprintf(out_idx, "%s_idx.bin", out);
+    char* real_out = make_fname(out, 0);
+    char* out_idx = make_fname(out, 1);
 
     rename(final_name, real_out);
+    remove(final_name);
     rename(final_idx, out_idx);
+    remove(final_idx);
 
     free(out_idx);
     free(real_out);
@@ -647,15 +609,14 @@ range find_data(char* fname, uint64_t batch_size, uint64_t size, float low, floa
 
     do {
         uint64_t start = idx*size*batch_size;
-        uint64_t size_limit = size*batch_size;
-        ret r = load(fname, start, size_limit, 0);
+        ret r = load(fname, start, size, batch_size, 0);
 
         ptr = bsearch_ineq((void*)&low, r.data, r.n / size, size, &find_data_cmp_db, 1);
         if(ptr) {
             start_idx = (ptr - r.data) / size + idx * batch_size - 1;
         }
         free(r.data);
-        if(r.n < size_limit || ptr) { break; }
+        if((r.n < batch_size * size) || ptr) { break; }
         idx++;
     } while(1);
 
@@ -667,9 +628,8 @@ range find_data(char* fname, uint64_t batch_size, uint64_t size, float low, floa
     void* prev_ptr = NULL;
     do {
         uint64_t start = idx*size*batch_size;
-        uint64_t size_limit = size*batch_size;
 
-        ret r = load(fname, start, size_limit, 0);
+        ret r = load(fname, start, size, batch_size, 0);
 
         prev_ptr = ptr;
         ptr = bsearch_ineq((void*)&high, r.data, r.n / size, size, &find_data_cmp_db, 0);
@@ -677,7 +637,7 @@ range find_data(char* fname, uint64_t batch_size, uint64_t size, float low, floa
             end_idx = (ptr - r.data) / size + idx * batch_size + 1;
         }
         free(r.data);
-        if(r.n < size_limit || !ptr) { break; }
+        if((r.n < size*batch_size) || !ptr) { break; }
         idx++;
     } while(1);
 
@@ -686,4 +646,31 @@ range find_data(char* fname, uint64_t batch_size, uint64_t size, float low, floa
     }
 
     return (range){ .start = start_idx, .end = end_idx };
+}
+
+
+res* make_res(double* scores, char** score_data, char* title, float mass, float rt, int charge, db* cands, int n) {
+    res* out = calloc(n, sizeof(res));
+    for(int i = 0; i < n; i++) {
+        strncpy(out[i].title, title, strlen(title));
+        strncpy(out[i].description, cands[i].description, strlen(cands[i].description));
+        strncpy(out[i].seq, cands[i].sequence, strlen(cands[i].sequence));
+        memcpy(out[i].modseq, cands[i].mods, 128*sizeof(float));
+        out[i].length = strlen(cands[i].sequence);
+        out[i].calc_mass = cands[i].mass;
+        out[i].mass = mass;
+        out[i].rt = rt;
+        out[i].charge = charge;
+        out[i].score = scores[i];
+        strncpy(out[i].score_data, score_data[i], strlen(score_data[i]));
+    }
+    return out;
+}
+
+void free_ret(ret r) {
+    free(r.data);
+}
+
+void free_ptr(void* r) {
+    free(r);
 }

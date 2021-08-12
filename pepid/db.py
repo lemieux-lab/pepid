@@ -60,16 +60,20 @@ def count_peps():
     Returns how many entries exist in the processed database
     """
 
-    return helper.count(blackboard.DB_PATH, helper.Db)
+    return helper.count(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index.bin", helper.KEY_TYPE)
 
-def pred_rt(cands):
+def pred_rt(cands, n):
     """
     Dummy function for retention time prediction that just outputs 0.
     """
 
-    return [0.0 for _ in cands]
+    ret = helper.get_buffer(helper.RT_TYPE, n)
+    for i in range(n):
+        ret[i] = 0.0
 
-def identipy_theoretical_spectrum(cands):
+    return ret
+
+def identipy_theoretical_spectrum(cands, n):
     """
     Simple spectrum prediction function generating b- and y-series ions
     without charged variants
@@ -88,7 +92,7 @@ def identipy_theoretical_spectrum(cands):
 
     return ret
 
-def theoretical_spectrum(cands):
+def theoretical_spectrum(cands, n):
     """
     Simple spectrum prediction function generating b- and y-series ions
     without charged variants
@@ -97,18 +101,21 @@ def theoretical_spectrum(cands):
     cterm = blackboard.config['search'].getfloat('cterm cleavage')
     nterm = blackboard.config['search'].getfloat('nterm cleavage')
 
-    ret = []
+    ret = helper.get_buffer(helper.SPEC_TYPE, n)
 
-    for i in range(len(cands)):
-        seq = cands[i]['sequence']
-        mod = cands[i]['mods']
+    for i in range(n):
+        seq = cands[i].sequence.decode('ascii')
+        mod = numpy.zeros((cands[i].length,))
+        for im in range(cands[i].length):
+            mod[im] = cands[i].mods[im]
         th_masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm)
-        th_masses = [[x, 1] for x in th_masses]
-        ret.append(th_masses)
+        for im, m in enumerate(th_masses):
+            ret[i][im][0] = m
+            ret[i][im][1] = 1
 
     return ret
 
-def user_processing(start, end):
+def user_processing(data, n):
     """
     Parses the spectrum prediction and rt prediction functions from config
     and applies them to the candidate peptides, adding the result to the corresponding candidate
@@ -132,19 +139,25 @@ def user_processing(start, end):
         import sys
         sys.stderr.write("[db post]: user spectrum prediction function not found, using default function instead\n")
 
-    arr = helper.load_db(blackboard.DB_PATH, start=start, end=end)
+    arr = data
  
-    rts = numpy.array(rt_fn(arr))
-    specs = spec_fn(arr)
+    rts_raw = rt_fn(arr, n)
+    rts = numpy.array([x for x in rts_raw])
+    specs_raw = spec_fn(arr, n)
     max_peaks = blackboard.config['search'].getint('max peaks')
-    specs = numpy.array([numpy.pad(numpy.array(x).reshape((-1, 2))[:max_peaks], ((0, max(0, max_peaks - len(x))), (0, 0))) for x in specs])
+    specs = numpy.array([numpy.pad(numpy.array([[xx[0], xx[1]] for xx in x]).reshape((-1, 2))[:max_peaks], ((0, max(0, max_peaks - len(x))), (0, 0))) for x in specs_raw])
     spec_npeaks = numpy.array(list(map(lambda x: numpy.where(x[:,0] == 0)[0][0], specs)))
 
-    arr['rt'] = rts
-    arr['spec'] = specs
-    arr['npeaks'] = spec_npeaks
+    for i in range(n):
+        arr[i].rt = rts[i]
+        arr[i].npeaks = spec_npeaks[i]
+        for j in range(specs.shape[0]):
+            arr[i].spec[j][0] = specs[i][j][0]
+            arr[i].spec[j][1] = specs[i][j][1]
 
-    #helper.dump_db(blackboard.DB_PATH, arr, offset=start, erase=False)
+    helper.free(specs_raw)
+    helper.free(rts_raw)
+    return arr
 
 def process_entry(description, buff, settings):
     data = []
@@ -246,7 +259,7 @@ def fill_db(start, end):
     uniques = numpy.unique(seqmods, return_index=True)[-1]
 
     #arr = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "predb{}.npy".format(start)), mode="w+", dtype=blackboard.DB_DTYPE, shape=len(uniques))
-    arr = numpy.zeros(dtype=[('mass', 'float32'), ('seq', 'unicode', 128), ('mods', 'float32', 128)], shape=len(uniques))
+    arr = numpy.zeros(dtype=blackboard.KEY_DATA_DTYPE + [('mass', 'float32')], shape=len(uniques))
     i = 0
     for k in uniques:
         d = data[k]
@@ -255,10 +268,18 @@ def fill_db(start, end):
         arr[i]['seq'] = d[1]
         arr[i]['mods'] = numpy.pad(d[2][:128], (0, max(0, 128 - len(d[2]))))
         arr[i]['mass'] = d[5]
+        arr[i]['desc'] = d[0]
         i += 1
-    helper.dump_key(os.path.join(blackboard.config['data']['tmpdir'], "key{}.bin".format(start)), arr['mass'], offset=0, erase=True)
-    helper.dump_seq(os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(start)), arr[['seq', 'mods']], offset=0, erase=True)
+    nk = helper.dump_key(os.path.join(blackboard.config['data']['tmpdir'], "key{}.bin".format(start)), arr['mass'], offset=0, erase=True)
+    ns = helper.dump_seq(os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(start)), arr[['desc', 'seq', 'mods']], offset=0, erase=True)
     del arr
+
+def inflate(start, end):
+    keys = helper.load_key(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index.bin", start, end)
+    ret, n_ret = helper.load_db(blackboard.DB_PATH, start, end)
+    ret = user_processing(ret, n_ret)
+    helper.dump_db(blackboard.DB_PATH, ret, n_ret, offset=start, erase=False)
+    helper.free(ret)
 
 def prepare_db():
     """

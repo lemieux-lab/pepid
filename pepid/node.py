@@ -1,3 +1,4 @@
+import traceback
 import socket
 import time
 import random
@@ -47,6 +48,7 @@ class Node():
                         conn.sendall(struct.pack("!cI{}sc".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8'), "$".encode('utf-8')))
                         import sys
                         sys.stderr.write("NODE: Got error {}\n".format(repr(e)))
+                        traceback.print_tb(e.__traceback__)
                 else:
                     err = "Unknown message code received: {}".format(msg[0])
                     conn.sendall(struct.pack("!cI{}s".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8')))
