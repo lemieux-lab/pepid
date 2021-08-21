@@ -9,71 +9,92 @@ import re
 import helper
 import functools
 
+def crnhs(cands, query):
+    acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
+    acc = blackboard.config['search'].getfloat('peak matching tolerance')
+    upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
+    return helper.rnhs(query, cands[0], cands[1], upper_bound)
+
 def identipy_rnhs2(cands, query):
     import scipy
     from scipy import spatial
     ret = []
     scores = []
 
-    spectrum = numpy.array(query['spec'])
-    mz_array = spectrum[:,0]
+    spectrum = query['spec'][:query['npeaks']]
+    norm = 0
+    mz_array = spectrum[:,:1]
+    intens = spectrum[:,1]
+    norm = intens.sum()
     charge = query['charge']
     qmass = query['mass']
 
     nterm = blackboard.config['search'].getfloat('nterm cleavage')
     cterm = blackboard.config['search'].getfloat('cterm cleavage')
-    tree = scipy.spatial.cKDTree(mz_array.reshape((mz_array.size, 1)))
-
-    norm = spectrum[:,1].sum()
+    #tree = scipy.spatial.cKDTree(mz_array)
+    #import faiss
+    #tree = faiss.IndexFlatL2(1)
+    #tree.add(numpy.ascontiguousarray(mz_array))
+    import sklearn
+    import sklearn.neighbors
+    #tree = sklearn.neighbors.KDTree(mz_array, leaf_size=16)
 
     acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
     acc = blackboard.config['search'].getfloat('peak matching tolerance')
 
+    upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
+    #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
+    theoreticals = []
+    seqs = []
+    seq_masses = []
+    query_peaks = blackboard.config['search'].getint('max peaks')
+    for i in range(cands[1]):
+        c = cands[0][i]
+        theoreticals.append(numpy.ndarray(buffer=c.spec, dtype='float32', shape=(query_peaks, 2))[:,:1])
+        seqs.append(c.sequence.decode('ascii'))
+        seq_masses.append(c.mass)
+    theoreticals = numpy.asarray(theoreticals).reshape((-1, 1))
+    tree = sklearn.neighbors.KDTree(theoreticals)
+    import sys
+    dists = []
+    inds = []
+    dists, inds = tree.query(mz_array, k=1, sort_results=False, dualtree=False)
+    dists = dists.reshape((cands[1], -1))
+
     for i in range(cands[1]):
         cand = cands[0][i]
-        theoretical = numpy.zeros((cand.npeaks,1)) # xxx: needs to be dict, etc.
-        for j in range(cand.npeaks):
-            theoretical[j][0] = cand.spec[j][0]
+        #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
+        #theoretical = numpy.ascontiguousarray(numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1]) # xxx: needs to be dict, etc.
 
-        seq = cand.sequence.decode('ascii')
-        seq_mass = cand.mass
+        seq = seqs[i]
+        seq_mass = seq_masses[i]
 
         score = 0
         mult = []
-        match = {}
-        match2 = {}
         total_matched = 0
         sumI = 0
 
-        dist_all = []
-        fragments = theoretical
-        dist, ind = tree.query(fragments, distance_upper_bound=acc if not acc_ppm else (float(acc) / 1e6 * 2000))
-        mask1 = (dist != numpy.inf)
-        if acc_ppm:
-            nacc = numpy.where(dist[mask1] / mz_array[ind[mask1]] * 1e6 > acc)[0]
-            mask2 = mask1.copy()
-            mask2[nacc] = False
-        else:
-            mask2 = mask1
-        nmatched = mask2.sum()
-        if nmatched:
+        dist = dists[i][:cand.npeaks]
+        ind = inds[i][:cand.npeaks]
+        ind = ind[dist < upper_bound]
+        dist = dist[dist < upper_bound]
+        nmatched = len(ind)
+        if nmatched > 0:
             total_matched += nmatched
             mult.append(numpy.math.factorial(nmatched))
-            sumi = spectrum[:,1][ind[mask2]].sum()
+            sumi = sum(intens[ind])
             sumI += sumi
             score += sumi / norm
-            dist_all.extend(dist[mask2])
-        match['!'] = mask2
-        match2['!'] = mask2
         if not total_matched:
             ret.append({})
             scores.append(0)
             continue
         for m in mult:
             score *= m
-        sumI = numpy.log10(sumI)
+        if sumI != 0:
+            sumI = numpy.log10(sumI)
 
-        ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'match2': {k:v.tolist() for k, v in match2.items()}, 'match': {k:v.tolist() for k, v in match.items()}, 'sumI': sumI, 'dist': dist_all, 'total_matched': total_matched})
+        ret.append({'score': score, 'theoretical': theoreticals[i].tolist(), 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched})
         scores.append(score)
     return scores, ret
 
@@ -83,7 +104,7 @@ def identipy_rnhs(cands, query):
     ret = []
     scores = []
 
-    spectrum = numpy.array(query['spec'])
+    spectrum = numpy.asarray(query['spec'])
     mz_array = spectrum[:,0]
     charge = query['charge']
     qmass = query['mass']
@@ -118,6 +139,7 @@ def identipy_rnhs(cands, query):
             if ion[-1] >= charge:
                 break
             dist, ind = tree.query(fragments, distance_upper_bound=acc if not acc_ppm else (float(acc) / 1e6 * 2000))
+            
             mask1 = (dist != numpy.inf)
             if acc_ppm:
                 nacc = numpy.where(dist[mask1] / mz_array[ind[mask1]] * 1e6 > acc)[0]
@@ -164,7 +186,7 @@ def rnhs(cands, query):
     is_ppm = blackboard.config['search']['matching unit'] == 'ppm'
     tol = blackboard.config['search'].getfloat('peak matching tolerance')
 
-    spec = numpy.array(query['spec'])[:query['npeaks']]
+    spec = numpy.ndarray(buffer=query['spec'], dtype='float32', shape=(query['npeaks'], 2))
 
     ret = []
     scores = []
@@ -176,7 +198,6 @@ def rnhs(cands, query):
         th_masses = numpy.zeros((cand.npeaks,))
         for ipeak in range(cand.npeaks):
             th_masses[ipeak] = cand.spec[ipeak][0]
-        th_masses = th_masses.reshape((-1,))
         th_masses.sort()
 
         #all_masses = numpy.repeat(th_masses, spec.shape[0]).reshape((-1, spec.shape[0])).T
@@ -218,7 +239,7 @@ def rnhs(cands, query):
                     "z4": int(4 <= query['charge'] <= 6), "z7": int(query['charge'] >= 7), "isoDM": abs(cand.mass - query['mass']),
                     "isoDMppm": abs(pepid_utils.calc_ppm(cand.mass, query['mass'])), "isoDmz": abs(cand.mass - query['mass']),
                     "12C": 1, "mc0": int(mc == 0), "mc1": int(0 <= mc <= 1), "mc2": int(mc >= 2),
-                    'varmods': float((numpy.array(mods) > 0).sum()) / max(1, sum([x in varmods for x in cand.sequence.decode('ascii')])),
+                    'varmods': float((numpy.asarray(mods) > 0).sum()) / max(1, sum([x in varmods for x in cand.sequence.decode('ascii')])),
                     'varmodsCount': len(numpy.unique(mods)), 'totInt': numpy.log10(intens_sum),
                     'intMatchedTot': numpy.log10(sum([spec[dist_mask[:,i]][:,1].sum() for i in range(dist_mask.shape[1])])),
                     'relIntMatchedTot': intens_score, 'RMS': numpy.sqrt((all_dists[dist_mask]**2).mean()),
@@ -268,25 +289,23 @@ def search_core(start, end):
 
     batch_size = blackboard.config['performance'].getint('score batch size')
 
-    import sys
-    import time
-
     for iq, q in enumerate(queries):
-        sys.stderr.write("[{}] Q {}/{}\n".format(time.strftime("%H:%M:%S", time.localtime()), iq, len(queries)))
         if(q['mass'] > 0):
             cands_start, cands_end = helper.find(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index.bin", helper.KEY_TYPE, q['min_mass'], q['max_mass'])
             if cands_start >= 0:
                 if cands_end < 0:
                     cands_end = cands_start
                 for i in range(cands_start, cands_end, batch_size):
-                    sys.stderr.write("[{}] B {}/{}\n".format(time.strftime("%H:%M:%S", time.localtime()), (i - cands_start) // batch_size, ((cands_end - cands_start + 1) // batch_size)))
-                    cands, n_cands = helper.load_db(blackboard.DB_PATH, start=i, end=min(i + batch_size - 1, cands_end) + 1)
+                    cands, n_cands = helper.load_db(blackboard.DB_PATH, start=i, end=min(i + batch_size, cands_end+1))
                     if(n_cands > 0):
                         scores, score_data = scoring_fn((cands, n_cands), q)
-                        results = helper.make_res(scores, score_data, q, cands)
-                        helper.dump_res(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_search.bin", results, len(scores), offset=start + i - cands_start)
+                        results = helper.make_res(scores, score_data, q, cands, n_cands)
+                        #helper.lock()
+                        helper.dump_res(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_search.bin", results, n_cands, offset=start + i - cands_start)
+                        #helper.unlock()
                         helper.free(results)
                         helper.free(cands)
+                        helper.free_score(score_data)
 
 def prepare_search():
     """

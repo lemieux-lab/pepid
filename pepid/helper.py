@@ -1,10 +1,22 @@
 import blackboard
 import ctypes
 import numpy
+import fcntl
+import os
 
 KEY_TYPE = ctypes.c_float
 RT_TYPE = ctypes.c_float
 SPEC_TYPE = (ctypes.c_float * 2) * blackboard.config['search'].getint('max peaks')
+
+class ScoreRet(ctypes.Structure):
+    _fields_ = [("distances", ctypes.POINTER(ctypes.c_double)),
+                ("scores", ctypes.POINTER(ctypes.c_double)),
+                ("sumI", ctypes.POINTER(ctypes.c_double)),
+                ("total_matched", ctypes.POINTER(ctypes.c_uint)),
+                ("theoretical", ctypes.POINTER(ctypes.c_float)),
+                ("spec", ctypes.POINTER(ctypes.c_float)),
+                ("ncands", ctypes.c_uint),
+                ("npeaks", ctypes.c_uint)]
 
 class Seq(ctypes.Structure):
     _fields_ = [("desc", ctypes.c_char * 1024),
@@ -57,6 +69,7 @@ lib.load.restype = Ret
 lib.find_data.restype = Range
 lib.count.restype = ctypes.c_ulonglong
 lib.make_res.restype = ctypes.POINTER(Res)
+lib.rnhs.restype = ScoreRet
 
 def npy_data_to_c(npy_data, klass):
     ret = (klass * len(npy_data))()
@@ -92,9 +105,9 @@ def c_data_to_npy(c_data, klass, dtype):
             if k in ['meta', 'score_data', 'title', 'description', 'seq', 'sequence']:
                 c_res = c_res.decode('ascii')
             elif k in ['spec']:
-                c_res = numpy.pad(numpy.array([[c_res[j][0], c_res[j][1]] for j in range(data[i].npeaks)]).reshape((-1, 2)), ((0, max(0, blackboard.config['search'].getint('max peaks') - data[i].npeaks)), (0, 0)))
+                c_res = numpy.pad(numpy.asarray([[c_res[j][0], c_res[j][1]] for j in range(data[i].npeaks)]), ((0, max(0, blackboard.config['search'].getint('max peaks') - data[i].npeaks)), (0, 0)))
             elif k in ['modseq', 'mods']:
-                c_res = numpy.pad(numpy.array([c_res[j] for j in range(data[i].length)]), ((0, max(0, 128 - data[i].length))))
+                c_res = numpy.pad(numpy.asarray([c_res[j] for j in range(data[i].length)]), ((0, max(0, 128 - data[i].length))))
             ret[i][k] = c_res
     return ret
 
@@ -136,19 +149,12 @@ def load_db(fname, start=0, end=0):
     c_data = lib.load(fname.encode('ascii'), ctypes.c_ulonglong(start * ctypes.sizeof(Db)), ctypes.c_ulonglong(ctypes.sizeof(Db)), ctypes.c_ulonglong(end - start), 0)
     return ctypes.cast(c_data.data, ctypes.POINTER(Db)), c_data.n // ctypes.sizeof(Db)
 
-def get_buffer(klass, n):
-    return (klass * n)()
-
-def make_res(scores, score_data, q, cands):
-    cscores = (ctypes.c_double * len(scores))()
-    cscore_data = (ctypes.c_char_p * len(scores))()
-    for i in range(len(scores)):
-        cscores[i] = scores[i]
-        cscore_data[i] = "".encode('ascii') #repr(score_data[i]).encode('ascii')  # WARN: VERY slow. Should be replaced by a C stub and possibly even grisu3/dragonbox
-    return lib.make_res(cscores, cscore_data, q['title'].encode('ascii'), ctypes.c_float(q['mass']), ctypes.c_float(q['rt']), ctypes.c_int(q['charge']), cands, len(scores))
+def make_res(scores, score_data, q, cands, n_scores):
+    return lib.make_res(scores, score_data, q['title'].encode('ascii'), ctypes.c_float(q['mass']), ctypes.c_float(q['rt']), ctypes.c_int(q['charge']), cands, n_scores)
 
 def dump_res(fname, res, n, offset=0):
-    return lib.dump(fname.encode('ascii'), ctypes.c_ulonglong(offset * ctypes.sizeof(Res)), res, ctypes.c_ulonglong(n * ctypes.sizeof(Res)), 0) // ctypes.sizeof(Res)
+    ret = lib.dump(fname.encode('ascii'), ctypes.c_ulonglong(offset * ctypes.sizeof(Res)), res, ctypes.c_ulonglong(n * ctypes.sizeof(Res)), 0) // ctypes.sizeof(Res)
+    return ret
 
 def dump_key(fname, data, offset=0, erase=True):
     r = (ctypes.c_float * len(data))()
@@ -208,3 +214,63 @@ def find(fname, klass, low, high):
 
 def free(obj):
     lib.free_ptr(ctypes.cast(obj, ctypes.c_void_p))
+
+def free_score(obj):
+    lib.free_score(ctypes.pointer(obj))
+
+def query_to_c(q):
+    ret = Query()
+    ret.title = q['title'].encode('ascii')
+    ret.rt = q['rt']
+    ret.charge = q['charge']
+    ret.mass = q['mass']
+    ret.npeaks = q['npeaks']
+    ret.min_mass = q['min_mass']
+    ret.max_mass = q['max_mass']
+    ret.meta = q['meta'].encode('ascii')
+    spec = q['spec']
+
+    for i in range(len(spec)):
+        ret.spec[i][0] = spec[i][0]
+        ret.spec[i][1] = spec[i][1]
+
+    return ret
+
+def score_to_dict(s):
+    ret = [{} for _ in range(s.ncands)]
+
+    maxpeaks = blackboard.config['search'].getint('max peaks')
+
+    dists = numpy.zeros(dtype='float64', shape=(s.ncands, s.npeaks))
+    theoreticals = numpy.zeros(dtype='float32', shape=(s.ncands, maxpeaks, 2))
+    specs = numpy.zeros(dtype='float32', shape=(s.ncands, maxpeaks, 2))
+    ret_scores = numpy.ndarray(buffer=s.scores, shape=s.ncands, dtype='float64')
+    for i in range(s.ncands):
+        for j in range(s.npeaks):
+            idx = j * 2 + i * 2 * maxpeaks
+            dists[i,j] = s.distances[i * s.npeaks + j]
+            theoreticals[i,j,0] = s.theoretical[idx]
+            theoreticals[i,j,1] = s.theoretical[idx + 1]
+            specs[i,j,0] = s.spec[idx]
+            specs[i,j,1] = s.spec[idx + 1]
+
+    for i in range(s.ncands):
+        ret[i]['dist'] = dists[i].tolist()
+        ret[i]['score'] = s.scores[i]
+        ret[i]['sumI'] = s.sumI[i]
+        ret[i]['total_matched'] = s.total_matched[i]
+        ret[i]['theoretical'] = theoreticals[i].tolist()
+        ret[i]['spec'] = specs[i].tolist()
+
+    return ret_scores, ret
+
+def rnhs(q, cands, n_cands, tol):
+    q = query_to_c(q)
+    ret = lib.rnhs(ctypes.pointer(q), ctypes.cast(cands, ctypes.c_void_p), ctypes.c_int(n_cands), ctypes.c_int(blackboard.config['search'].getint('max peaks')), ctypes.c_uint32(ctypes.sizeof(Db)), ctypes.c_float(tol))
+    return ret.scores, ret
+
+def lock():
+    fcntl.lockf(blackboard.LOCK, fcntl.LOCK_EX)
+
+def unlock():
+    fcntl.lockf(blackboard.LOCK, fcntl.LOCK_UN)

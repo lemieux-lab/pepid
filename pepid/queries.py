@@ -60,7 +60,7 @@ def fill_queries(start, end):
                 arr[entry_idx - start]['charge'] = charge
                 arr[entry_idx - start]['mass'] = precmass
                 max_peaks = blackboard.config['search'].getint('max peaks')
-                arr[entry_idx - start]['spec'] = numpy.pad(numpy.array(list(zip(mz_arr, intens_arr)))[:max_peaks, :], ((0, max(0, max_peaks - len(mz_arr))), (0, 0)))
+                arr[entry_idx - start]['spec'] = numpy.pad(numpy.asarray(list(zip(mz_arr, intens_arr)))[:max_peaks, :], ((0, max(0, max_peaks - len(mz_arr))), (0, 0)))
                 arr[entry_idx - start]['npeaks'] = len(mz_arr)
                 arr[entry_idx - start]['min_mass'] = precmass + delta_l
                 arr[entry_idx - start]['max_mass'] = precmass + delta_r

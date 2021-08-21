@@ -213,6 +213,12 @@ void merge_sort_merge(char* fname1, char* fname2, char* out, uint32_t size, uint
     free(fo); free(io);
 }
 
+int float_cmp(const void* left, const void* right) {
+    float l = *((float*)left);
+    float r = *((float*)right);
+    return (r < l? 1 : (r == l? 0 : -1));
+}
+
 int merge_sort_cmp_db(const void* left, const void* right) {
     db* rleft = (db*)left;
     db* rright = (db*)right;
@@ -648,8 +654,83 @@ range find_data(char* fname, uint64_t batch_size, uint64_t size, float low, floa
     return (range){ .start = start_idx, .end = end_idx };
 }
 
+void score_data_to_str(char* out, score_ret score_data, int idx, int max_size) {
+    int printed_size = 0;
+    printed_size += sprintf(out, "{'score':%f,'sumI':%f,'total_matched':%d,'theoretical':[", score_data.scores[idx], score_data.sumI[idx], score_data.total_matched[idx]);
+    char early_out = 0;
+    for(int j = 0; j < score_data.npeaks; j += 4) {
+        int i = idx * 2 * score_data.npeaks + j * 2;
+        if(score_data.theoretical[i] == 0) { early_out = 1; break; }
+        int n = snprintf(out + printed_size, max_size - printed_size, "[%f,%f],[%f,%f],[%f,%f],[%f,%f]", score_data.theoretical[i], score_data.theoretical[i+1], score_data.theoretical[i+2], score_data.theoretical[i+3], score_data.theoretical[i+4], score_data.theoretical[i+5], score_data.theoretical[i+6], score_data.theoretical[i+7]);
+        printed_size += n;
+        if(printed_size >= max_size-1) { return; } // space for last comma, hence -1
+        if(j != score_data.npeaks-1) { sprintf(out + printed_size, ","); }
+    }
+    int leftovers = early_out? 0 : score_data.npeaks % 4;
+    unsigned tgt_size = MAX(0, max_size - printed_size);
+    switch(leftovers) {
+        case 3:
+            printed_size += snprintf(out + printed_size, tgt_size, "[%f,%f],[%f,%f],[%f,%f]]", score_data.theoretical[score_data.npeaks-6], score_data.theoretical[score_data.npeaks-5], score_data.theoretical[score_data.npeaks-4], score_data.theoretical[score_data.npeaks-3], score_data.theoretical[score_data.npeaks-2], score_data.theoretical[score_data.npeaks-1]); break;
+        case 2:
+            printed_size += snprintf(out + printed_size, tgt_size, "[%f,%f],[%f,%f]]", score_data.theoretical[score_data.npeaks-4], score_data.theoretical[score_data.npeaks-3], score_data.theoretical[score_data.npeaks-2], score_data.theoretical[score_data.npeaks-1]); break;
+        case 1:
+            printed_size += snprintf(out + printed_size, tgt_size, "[%f,%f]]", score_data.theoretical[score_data.npeaks-2], score_data.theoretical[score_data.npeaks-1]); break;
+        default: // 0
+            printed_size += snprintf(out + printed_size, tgt_size, "]"); break;
+    }
+    if(printed_size >= max_size) { return; }
+    printed_size += snprintf(out + printed_size, max_size - printed_size, ",'spec':[");
+    if(printed_size >= max_size) { return; }
+    early_out = 0;
+    for(int j = 0; j < score_data.npeaks; j += 4) {
+        int i = idx * 2 * score_data.npeaks + j * 2;
+        if(score_data.spec[i] == 0) { early_out = 1; break; }
+        int n = snprintf(out + printed_size, max_size - printed_size, "[%f,%f],[%f,%f],[%f,%f],[%f,%f]", score_data.spec[i], score_data.spec[i+1], score_data.spec[i+2], score_data.spec[i+3], score_data.spec[i+4], score_data.spec[i+5], score_data.spec[i+6], score_data.spec[i+7]);
+        printed_size += n;
+        if(printed_size >= max_size-1) { return; } // space for last comma, hence -1
+        if(j != score_data.npeaks-1) { sprintf(out + printed_size, ","); }
+    }
+    leftovers = early_out? 0 : score_data.npeaks % 4;
+    tgt_size = MAX(0, max_size - printed_size);
+    switch(leftovers) {
+        case 3:
+            printed_size += snprintf(out + printed_size, tgt_size, "[%f,%f],[%f,%f],[%f,%f]]", score_data.spec[score_data.npeaks-6], score_data.spec[score_data.npeaks-5], score_data.spec[score_data.npeaks-4], score_data.spec[score_data.npeaks-3], score_data.spec[score_data.npeaks-2], score_data.spec[score_data.npeaks-1]); break;
+        case 2:
+            printed_size += snprintf(out + printed_size, tgt_size, "[%f,%f],[%f,%f]]", score_data.spec[score_data.npeaks-4], score_data.spec[score_data.npeaks-3], score_data.spec[score_data.npeaks-2], score_data.spec[score_data.npeaks-1]); break;
+        case 1:
+            printed_size += snprintf(out + printed_size, tgt_size, "[%f,%f]]", score_data.spec[score_data.npeaks-2], score_data.spec[score_data.npeaks-1]); break;
+        default: // 0
+            printed_size += snprintf(out + printed_size, tgt_size, "]"); break;
+    }
+    if(printed_size >= max_size) { return; }
+    printed_size += snprintf(out + printed_size, max_size - printed_size, ",'dist':[");
+    if(printed_size >= max_size) { return; }
+    early_out = 0;
+    for(int j = 0; j < score_data.npeaks; j += 4) {
+        int i = idx * score_data.npeaks + j;
+        if(score_data.distances[i] == 0) { early_out = 1; break; }
+        int n = snprintf(out + printed_size, max_size - printed_size, "%f,%f,%f,%f", score_data.distances[i], score_data.distances[i+1], score_data.distances[i+2], score_data.distances[i+3]);
+        printed_size += n;
+        if(printed_size >= max_size-1) { return; } // space for last comma, hence -1
+        if(j != score_data.npeaks-1) { sprintf(out + printed_size, ","); }
+    }
+    leftovers = early_out? 0 : score_data.npeaks % 4;
+    tgt_size = MAX(0, max_size - printed_size);
+    switch(leftovers) {
+        case 3:
+            printed_size += snprintf(out + printed_size, tgt_size, "%f,%f,%f]", score_data.distances[score_data.npeaks-3], score_data.distances[score_data.npeaks-2], score_data.distances[score_data.npeaks-1]); break;
+        case 2:
+            printed_size += snprintf(out + printed_size, tgt_size, "%f,%f]", score_data.distances[score_data.npeaks-2], score_data.distances[score_data.npeaks-1]); break;
+        case 1:
+            printed_size += snprintf(out + printed_size, tgt_size, "%f]", score_data.distances[score_data.npeaks-1]); break;
+        default: // 0
+            printed_size += snprintf(out + printed_size, tgt_size, "]"); break;
+    }
+    if(printed_size >= max_size) { return; }
+    printed_size += snprintf(out + printed_size, max_size - printed_size, "}");
+}
 
-res* make_res(double* scores, char** score_data, char* title, float mass, float rt, int charge, db* cands, int n) {
+res* make_res(double* scores, score_ret score_data, char* title, float mass, float rt, int charge, db* cands, int n) {
     res* out = calloc(n, sizeof(res));
     for(int i = 0; i < n; i++) {
         strncpy(out[i].title, title, strlen(title));
@@ -662,7 +743,7 @@ res* make_res(double* scores, char** score_data, char* title, float mass, float 
         out[i].rt = rt;
         out[i].charge = charge;
         out[i].score = scores[i];
-        strncpy(out[i].score_data, score_data[i], strlen(score_data[i]));
+        score_data_to_str(out[i].score_data, score_data, i, sizeof(out[i].score_data) / sizeof(char));
     }
     return out;
 }
@@ -673,4 +754,132 @@ void free_ret(ret r) {
 
 void free_ptr(void* r) {
     free(r);
+}
+
+void free_score(score_ret* score) {
+    free(score->distances);
+    free(score->mask);
+    free(score->scores);
+    free(score->sumI);
+    free(score->total_matched);
+    free(score->theoretical);
+    free(score->spec);
+}
+
+score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size, float tol) {
+    score_ret r;
+    r.ncands = n_cands;
+    r.npeaks = q->npeaks;
+    r.distances = calloc(n_cands * npeaks, sizeof(double));
+    r.mask = calloc(n_cands, sizeof(char));
+    r.scores = calloc(n_cands, sizeof(double));
+    r.sumI = calloc(n_cands, sizeof(double));
+    r.total_matched = calloc(n_cands, sizeof(uint32_t));
+    r.theoretical = calloc(n_cands * npeaks * 2, sizeof(float));
+    r.spec = calloc(n_cands * npeaks * 2, sizeof(float));
+
+    int32_t* indices = calloc(n_cands * npeaks, sizeof(int32_t));
+    memset(indices, -1, n_cands * npeaks * sizeof(int32_t));
+    uint32_t* prev_inds = calloc(n_cands, sizeof(uint32_t));
+
+    double intens_norm = 0;
+    #ifdef HELPER_BSEARCH
+    for(int i = 0; i < q->npeaks; i++) {
+        intens_norm += q->spec[i][1];
+        for(int j = 0; j < n_cands; j++) {
+            db* cand = ((db*)(cands + elt_size * j));
+            int candpeaks = cand->npeaks;
+            if(cand->npeaks == 0) { continue; }
+            void* found = bsearch_ineq((void*)(&(q->spec[i][0])), &(cand->spec[prev_inds[j]]), candpeaks - prev_inds[j], 2 * sizeof(float), &float_cmp, 0);
+            if(!found) { continue; }
+            int idx = (found - (void*)(cand->spec)) / (2 * sizeof(float));
+            float dist = cand->spec[idx][0] - q->spec[i][0];
+            float dist_next = q->spec[i][0] - cand->spec[idx+1][0];
+            if(dist < dist_next && dist < tol) {
+                prev_inds[j] = idx;
+                r.distances[j * npeaks + idx] = dist;
+                indices[j * npeaks + idx] = idx;
+            } else if(dist_next < tol) {
+                prev_inds[j] = idx+1;
+                r.distances[j * npeaks + idx+1] = dist_next;
+                indices[j * npeaks + idx+1] = idx+1;
+            }
+        }
+    }
+    #else
+    for(int i = 0; i < q->npeaks; i++) {
+        intens_norm += q->spec[i][1];
+        for(int j = 0; j < n_cands; j++) {
+            db* cand = ((db*)(cands + elt_size * j));
+            int candpeaks = cand->npeaks;
+            
+            for(int k = prev_inds[j]; k < candpeaks; k++) {
+                double this_dist = q->spec[i][0] - cand->spec[k][0];
+                if(this_dist > 0) {
+                    prev_inds[j] = k;
+                }
+                double abs_dist = ABS(this_dist);
+                if(abs_dist < tol) {
+                    if(abs_dist < r.distances[j * npeaks + k]) {
+                        r.distances[j * npeaks + k] = abs_dist;
+                        indices[j * npeaks + k] = k;
+                    }
+                } else if(this_dist < 0) {
+                    // outside tol and higher m/z than current spec peak, impossible to find a better match
+                    break;
+                }
+            }
+        }
+    }
+    #endif
+
+    for(int j = 0; j < n_cands; j++) {
+        db* cand = ((db*)(cands + elt_size * j));
+        uint64_t* mult = calloc(n_cands, sizeof(uint64_t));
+        uint32_t mult_idx = 0;
+        double score = 0;
+        uint32_t total_matched = 0;
+        double total_intens = 0;
+
+        uint32_t n_matched = 0;
+        double intens_sum = 0;
+
+        for(int i = 0; i < cand->npeaks; i++) {
+            if(indices[j * npeaks + i] >= 0) {
+                r.mask[i] = 1;
+                n_matched += 1;
+                intens_sum += q->spec[i][1];
+            }
+        }
+        if(n_matched > 0) {
+            total_matched += n_matched;
+            mult[mult_idx] = FACT[MIN(n_matched, 20)];
+            mult_idx++;
+            total_intens += intens_sum;
+            score += intens_sum / intens_norm;
+        }
+        if(total_matched == 0) {
+            free(mult);
+            continue;
+        }
+        for(int i = 0; i < mult_idx; i++) {
+            score *= mult[i]; 
+        }
+        r.scores[j] = score;
+        r.sumI[j] = (total_intens != 0)? log10(total_intens) : 0;
+        r.total_matched[j] = total_matched;
+        for(int i = 0; i < cand->npeaks; i++) {
+            r.theoretical[j*2*npeaks + i*2] = cand->spec[i][0];
+            r.theoretical[j*2*npeaks + i*2 + 1] = cand->spec[i][1];
+        }
+        for(int i = 0; i < q->npeaks; i++) {
+            r.spec[j*2*npeaks + i*2] = q->spec[i][0];
+            r.spec[j*2*npeaks + i*2 + 1] = q->spec[i][1];
+        }
+        free(mult);
+    }
+
+    free(indices);
+    free(prev_inds);
+    return r;
 }

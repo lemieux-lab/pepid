@@ -13,9 +13,34 @@
 #include <pthread.h>
 #include <errno.h>
 #include <unistd.h>
+#include <math.h>
 
 #define MIN(A,B) (((A)>(B))?(B):(A))
 #define MAX(A,B) (((A)<(B))?(B):(A))
+#define ABS(A) (((A)<0)?(-(A)):(A))
+
+const uint64_t FACT[21] = {
+    1,
+    1,
+    2,
+    6,
+    24,
+    120,
+    720,
+    5040,
+    40320,
+    362880,
+    3628800,
+    479001600,
+    6227020800,
+    87178291200,
+    1307674368000,
+    20922789888000,
+    355687428096000,
+    6402373705728000,
+    121645100408832000,
+    2432902008176640000,
+};
 
 typedef struct {
     char title[1024];
@@ -114,6 +139,18 @@ typedef struct {
     char die;
 } thread_pool;
 
+typedef struct {
+    double* distances;
+    char* mask;
+    double* scores;
+    double* sumI;
+    uint32_t* total_matched;
+    float* theoretical;
+    float* spec;
+    uint32_t ncands;
+    uint32_t npeaks;
+} score_ret;
+
 uint64_t dump(char*, uint64_t, void*, uint64_t, char);
 ret load(char*, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -123,9 +160,11 @@ range find_data(char*, uint64_t, uint64_t, float, float);
 
 void reorder(char*, char*, char*, uint64_t, uint64_t);
 
-res* make_res(double*, char**, char*, float, float, int, db*, int);
+res* make_res(double*, score_ret, char*, float, float, int, db*, int);
 
 void free_ret(ret);
 void free_ptr(void*);
+void free_score(score_ret*);
 
 thread_pool pool;
+score_ret rnhs(query*, void*, int, int, uint64_t, float);

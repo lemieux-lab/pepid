@@ -325,6 +325,9 @@ def run():
             #os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*_*.bin")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.pkl")))
             # Note: db not removed in case it is to be reused.
+        if blackboard.LOCK is not None:
+            blackboard.LOCK.close()
+            os.system("rm -rf {}".format(os.path.join(blackboard.TMP_PATH, ".lock")))
 
 if __name__ == "__main__":
     if(len(sys.argv) != 2):
@@ -343,5 +346,6 @@ if __name__ == "__main__":
     log = logging.getLogger("pepid")
 
     blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
+    blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
 
     run()

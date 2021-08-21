@@ -142,11 +142,11 @@ def user_processing(data, n):
     arr = data
  
     rts_raw = rt_fn(arr, n)
-    rts = numpy.array([x for x in rts_raw])
+    rts = numpy.asarray([x for x in rts_raw])
     specs_raw = spec_fn(arr, n)
     max_peaks = blackboard.config['search'].getint('max peaks')
-    specs = numpy.array([numpy.pad(numpy.array([[xx[0], xx[1]] for xx in x]).reshape((-1, 2))[:max_peaks], ((0, max(0, max_peaks - len(x))), (0, 0))) for x in specs_raw])
-    spec_npeaks = numpy.array(list(map(lambda x: numpy.where(x[:,0] == 0)[0][0], specs)))
+    specs = numpy.asarray([numpy.pad(numpy.asarray([[xx[0], xx[1]] for xx in x]).reshape((-1, 2))[:max_peaks], ((0, max(0, max_peaks - len(x))), (0, 0))) for x in specs_raw])
+    spec_npeaks = numpy.asarray(list(map(lambda x: numpy.where(x[:,0] == 0)[0][0], specs)))
 
     for i in range(n):
         arr[i].rt = rts[i]
@@ -270,8 +270,8 @@ def fill_db(start, end):
         arr[i]['mass'] = d[5]
         arr[i]['desc'] = d[0]
         i += 1
-    nk = helper.dump_key(os.path.join(blackboard.config['data']['tmpdir'], "key{}.bin".format(start)), arr['mass'], offset=0, erase=True)
-    ns = helper.dump_seq(os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(start)), arr[['desc', 'seq', 'mods']], offset=0, erase=True)
+    helper.dump_key(os.path.join(blackboard.config['data']['tmpdir'], "key{}.bin".format(start)), arr['mass'], offset=0, erase=True)
+    helper.dump_seq(os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(start)), arr[['desc', 'seq', 'mods']], offset=0, erase=True)
     del arr
 
 def inflate(start, end):

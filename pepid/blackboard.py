@@ -9,6 +9,7 @@ QUERY_DTYPE = None
 DB_FNAME = None
 DB_PATH = None
 KEY_DATA_DTYPE = None
+LOCK = None
 
 def setup_constants():
     global DB_DTYPE

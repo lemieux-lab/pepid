@@ -17,8 +17,9 @@ class SearchNode(node.Node):
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
-        #import profile
-        #profile.run("import search; search.search_core({}, {})".format(start, end))
+        import cProfile
+        from pstats import SortKey
+        #cProfile.run("import search; search.search_core({}, {})".format(start, end), 'profile{}.log'.format(start), SortKey.CUMULATIVE)
         search.search_core(start, end)
 
     def prepare(self, msg):

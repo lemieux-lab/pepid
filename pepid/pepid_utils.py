@@ -115,7 +115,7 @@ def identipy_theor_spectrum(seq, mods, nterm_mass, cterm_mass, types=['b', 'y'],
             else:
                 marr = identipy_get_c_ions(peptide, mods, maxmass, pl, charge)
 
-            marr = numpy.array(marr)
+            marr = numpy.asarray(marr)
             peaks[(ion_type, charge)] = marr.reshape((marr.shape[0], 1)).tolist()
     return peaks
 
