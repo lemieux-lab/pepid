@@ -34,6 +34,7 @@ class QueryNode(node.Node):
     def prepare(self, msg):
         lgt = struct.unpack("!I", msg[:4])[0]
         self.path = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
+        blackboard.prepare_connection()
 
 if __name__ == '__main__':
     node.init(QueryNode)

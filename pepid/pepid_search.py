@@ -60,7 +60,7 @@ def handle_nodes(title, node_specs):
     Node-spec is [(node script, node count, n batches, [init msgs], [task msgs], [end msg]), ...]
     """
     node_ids = [[str(uuid.uuid4()) for _ in range(n[1])] for n in node_specs]
-    nodes = [[subprocess.Popen([blackboard.config['performance']['python'], node_spec[0], u] + ([cfg_file] if cfg_file is not None else [])) for u in node_id] for node_spec, node_id in zip(node_specs, node_ids)]
+    nodes = [[subprocess.Popen([blackboard.config['performance']['python']] + [node_spec[0], u] + ([cfg_file] if cfg_file is not None else [])) for u in node_id] for node_spec, node_id in zip(node_specs, node_ids)]
     
     socks = []
     base_path = blackboard.TMP_PATH
@@ -216,13 +216,7 @@ def run():
         queries.prepare_db()
         if blackboard.config['pipeline'].getboolean('db processing'):
             db.prepare_db()
-        cur = blackboard.CONN.cursor()
-        blackboard.execute(cur, "DROP INDEX IF EXISTS res_score_idx;")
-        blackboard.execute(cur, "DROP TABLE IF EXISTS results;")
-        blackboard.execute(cur, blackboard.create_table_str("results", blackboard.RES_COLS, [t if i != blackboard.RES_COLS.index("score") else t + " CHECK(score > 0)" for i, t in enumerate(blackboard.RES_TYPES)]))
-        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (score DESC);")
-        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS cand_mass_idx ON candidates (mass ASC);")
-        blackboard.CONN.commit()
+        blackboard.init_results_db()
 
         log.info("Preparing Input Processing Nodes...")
         
@@ -276,6 +270,10 @@ def run():
 
             handle_nodes("Input Postprocessing", qspec + dbspec)
 
+        cur = blackboard.CONN.cursor()
+        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS cand_mass_idx ON candidates (mass ASC);")
+        del cur
+
         if blackboard.config['pipeline'].getboolean('search'):
             n_search_batches = math.ceil(n_queries / batch_size)
             sspec = [("search_node.py", snodes, n_search_batches,
@@ -285,10 +283,26 @@ def run():
 
             handle_nodes("Search", sspec)
 
+            import glob
+            fname_pattern = list(filter(lambda x: len(x) > 0, blackboard.config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_*_pepidpart.sqlite"
+            fname_path = os.path.join(blackboard.TMP_PATH, fname_pattern)
+
+            files = glob.glob(fname_path)
+
+            cur = blackboard.CONN.cursor()
+            for f in tqdm.tqdm(files, total=len(files), desc="Merging Results"):
+                blackboard.execute(cur, "ATTACH DATABASE ? AS results_part;", (f,))
+                blackboard.execute(cur, "INSERT OR IGNORE INTO results SELECT * FROM results_part.results;")
+                blackboard.commit()
+                blackboard.execute(cur, "DETACH DATABASE results_part;")
+                os.remove(f)
+            blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (score DESC);")
+            del cur
+
         if blackboard.config['pipeline'].getboolean('postprocess search'):
             log.info("Search complete. Post-processing results...")
             processing.post_process()
-            log.info("Done. Saving results to {}.".format(blackboard.config['data']['output']))
+        log.info("Done. Saving results to {}.".format(blackboard.config['data']['output']))
         pepid_io.write_output()
 
     finally:
@@ -297,7 +311,7 @@ def run():
             import glob
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepidtmp*")))
-            # Note: db not removed in case it is to be reused.
+            # Note: final db not removed for future reuse
 
             if blackboard.LOCK is not None:
                 blackboard.LOCK.close()
@@ -320,6 +334,12 @@ if __name__ == "__main__":
     log = logging.getLogger("pepid")
 
     blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
+    import sys
+    sys.stderr.write("TMP_PATH is {}...\n".format(blackboard.TMP_PATH))
+    if(not os.path.exists(blackboard.TMP_PATH)):
+        sys.stderr.write("Creating {}\n".format(blackboard.TMP_PATH))
+        os.mkdir(blackboard.TMP_PATH)
+
     blackboard.LOCK = open(os.path.join(blackboard.config['data']['tmpdir'], ".lock"), "wb")
 
     run()

@@ -18,7 +18,6 @@ void reorder_key(float* data, uint64_t* indices, int n, uint64_t offset) {
     }
 }
 
-// TODO: parallelize
 // reorders the seq file entries in fname_tgt as per the indices in fname_idx
 void reorder(char* fname_idx, char* fname_tgt, char* out, uint64_t out_size, uint64_t batch_size) {
     db* buff = calloc(out_size, batch_size);

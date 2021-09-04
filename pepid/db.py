@@ -136,7 +136,7 @@ def user_processing(start, end):
     blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
 
     ret = cur.fetchall()
-    data = [{k:(v if k not in ('spec', 'mods') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, results)} for results in ret]
+    data = [{k:(v if k not in ('spec', 'mods', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, results)} for results in ret]
 
     rts = rt_fn(data)
     specs = spec_fn(data)
@@ -243,11 +243,22 @@ def fill_db(start, end):
         data.extend(peps)
 
     cur = blackboard.CONN.cursor()
-    data = [tuple([(row[k] if k not in ('spec', 'mods') else pickle.dumps(row[k])) for k in blackboard.DB_COLS]) for row in data]
-    blackboard.executemany(cur, blackboard.insert_all_str("candidates", blackboard.DB_COLS), data)
+    #ipt_data = [tuple([((row[k] if k not in ('spec', 'mods', 'meta') else pickle.dumps(row[k])) if k != 'meta' else pickle.dumps(None)) for k in blackboard.DB_COLS]) for row in data]
+    ipt_data = []
+    for row in data:
+        ipt_data.append([])
+        for k in blackboard.DB_COLS:
+            if k == 'meta':
+                ipt_data[-1].append(pickle.dumps(None))
+            elif k in ('spec', 'mods'):
+                ipt_data[-1].append(pickle.dumps(row[k]))
+            else:
+                ipt_data[-1].append(row[k])
+        ipt_data[-1] = tuple(ipt_data[-1])
+        
+    blackboard.executemany(cur, blackboard.insert_all_str("candidates", blackboard.DB_COLS), ipt_data)
     cur.close()
     blackboard.commit()
-    time.sleep(1)
 
 def prepare_db():
     """

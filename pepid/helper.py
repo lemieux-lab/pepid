@@ -4,6 +4,7 @@ import numpy
 import fcntl
 import os
 import pickle
+import signal
 
 lib = ctypes.cdll.LoadLibrary("./libhelper.so")
 
@@ -67,9 +68,11 @@ class ScoreRet(ctypes.Structure):
 
 lib.rnhs.restype = ctypes.POINTER(ScoreRet)
 lib.alloc.restype = ctypes.c_void_p
+lib.alloc.argtypes = [ctypes.c_uint64]
 lib.score_str.restype = ctypes.c_char_p
 lib.score_str.argtypes = [ctypes.c_void_p]
 lib.free_score.argtypes = [ctypes.c_void_p]
+lib.free.argtypes = [ctypes.c_void_p]
 
 def free(obj):
     lib.free_ptr(ctypes.cast(obj, ctypes.c_void_p))
@@ -78,24 +81,24 @@ def free_score(obj):
     lib.free_score(ctypes.pointer(obj))
 
 def query_to_c(q):
-    retptr = lib.alloc(ctypes.sizeof(Query))
+    ret = Query()
+    retptr = ctypes.pointer(ret)
 
-    ret = ctypes.cast(retptr, ctypes.POINTER(Query))[0]
     ret.title = q['title'].encode('ascii')
     ret.rt = q['rt']
     ret.charge = q['charge']
     ret.mass = q['mass']
-    ret.npeaks = len(q['spec'])
+    ret.npeaks = min(len(q['spec']), blackboard.config['search'].getint('max peaks'))
     ret.min_mass = q['min_mass']
     ret.max_mass = q['max_mass']
-    ret.meta = repr(q['meta']).encode('ascii')
+    #ret.meta = repr(q['meta']).encode('ascii')
     spec = q['spec']
 
     for i in range(min(len(spec), blackboard.config['search'].getint('max peaks'))):
         ret.spec[i][0] = spec[i][0]
         ret.spec[i][1] = spec[i][1]
 
-    return retptr
+    return ctypes.cast(retptr, ctypes.c_void_p)
 
 def one_score_to_py(score, n):
     ret = {}
@@ -110,15 +113,16 @@ def one_score_to_py(score, n):
     th_done = False
     spec_done = False
     for i in range(score.npeaks):
-        if score.theoretical[n * score.npeaks * 2 + i * 2] == 0:
+        if (not th_done) and score.theoretical[n * score.npeaks * 2 + i * 2] == 0:
             th_done = True
         if not th_done:
             ret['distance'].append(score.distances[n * score.npeaks + i])
             ret['mask'].append(score.mask[n * score.npeaks + i])
             ret['theoretical'].append([score.theoretical[n * score.npeaks * 2 + i * 2], score.theoretical[n * score.npeaks * 2 + i * 2 + 1]])
-        if score.spec[n * score.npeaks * 2 + i * 2] == 0:
+        if (not spec_done) and score.spec[n * score.npeaks * 2 + i * 2] == 0:
             spec_done = True
         if not spec_done:
+            #signal.signal(signal.SIGSEGV, make_sig_handler([score.npeaks, i, n, n * score.npeaks * 2 + i * 2, spec_done, score.spec[n * score.npeaks * 2 + i * 2]]))
             ret['spec'].append([score.spec[n * score.npeaks * 2 + i * 2], score.spec[n * score.npeaks * 2 + i * 2 + 1]])
         if spec_done and th_done:
             break
@@ -129,8 +133,6 @@ def nth_score(score, n):
     ret_data = one_score_to_py(score, n)
     ret['data'] = ret_data
     ret['score'] = ret_data['score']
-    ret['title'] = ret_data['title']
-    ret['desc'] = ret_data['desc']
     return ret
 
 def score_to_py(scoreptr, q, cands, n_scores):
@@ -138,30 +140,39 @@ def score_to_py(scoreptr, q, cands, n_scores):
     ret = []
     for i in range(n_scores):
         s = nth_score(score, i)
+        s['title'] = q['title']
+        s['desc'] = cands[i]['desc']
+        s['score'] = s['score']
+        s['seq'] = cands[i]['seq']
+        s['modseq'] = "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'])])
         ret.append(s)
     return ret
 
 def cands_to_c(cands):
-    retptr = lib.alloc(ctypes.sizeof(Db) * len(cands))
-    ret = ctypes.cast(retptr, ctypes.POINTER(Db))
+    ret = (Db * len(cands))()
     keys = list(cands[0].keys())
     for i in range(len(cands)):
         for k in keys:
-            if k not in ('spec', 'mods'):
-                setattr(ret[i], k, cands[i][k] if k not in ('desc', 'seq', 'meta') else (cands[i][k].encode('ascii') if k != 'meta' else pickle.dumps(cands[i]['meta'])))
+            if k not in ('spec', 'mods', 'seq', 'desc', 'meta'):
+                setattr(ret[i], k, cands[i][k])
+        ret[i].desc = cands[i]['desc'][:1023].encode('ascii')
+        ret[i].seq = cands[i]['seq'][:127].encode('ascii')
         spec = cands[i]['spec']
         for j in range(min(len(spec), blackboard.config['search'].getint('max peaks'))):
             ret[i].spec[j][0] = spec[j]
             ret[i].spec[j][1] = 0
-        for j in range(min(len(cands[i]['mods']), 128)):
+        for j in range(min(len(cands[i]['mods']), 127)):
             ret[i].mods[j] = cands[i]['mods'][j]
-        ret[i].npeaks = len(cands[i]['spec'])
-        ret[i].length = len(cands[i]['seq'])
-    return retptr
+        ret[i].npeaks = min(len(cands[i]['spec']), blackboard.config['search'].getint('max peaks'))
+        ret[i].length = min(len(cands[i]['seq']), 127)
+    return ctypes.cast(ret, ctypes.c_void_p)
 
-def insert_score_sqlite(dbpath, score, score_data):
-# isinstance(score, ctypes._SimpleCData)
-    pass
+def make_sig_handler(data):
+    def sig_handler(_1, _2):
+        import sys
+        sys.stderr.write("GOT SIGSEGV: {}\n".format(data))
+        raise ValueError("SIGSEGV")
+    return sig_handler
 
 def rnhs(q, cands, tol):
     qptr = query_to_c(q)
@@ -174,9 +185,10 @@ def rnhs(q, cands, tol):
     data.elt_size = ctypes.sizeof(Db)
     data.cands = ccands
     ret = lib.rnhs(data)
-    free(ccands)
-    free(qptr)
-    out = score_to_py(ret, q, cands, len(cands))
+    import sys
+    if ret[0].ncands != len(cands):
+        sys.stderr.write("WTF? {} vs {}!!\n".format(ret[0].ncands, len(cands)))
+    out = score_to_py(ret, q, cands, ret[0].ncands)
     lib.free_score(ret)
     return out
 

@@ -9,13 +9,14 @@ import re
 import helper
 import functools
 import pickle
+import copy
 
 def crnhs(cands, query):
     acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
     acc = blackboard.config['search'].getfloat('peak matching tolerance')
     upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
     ret = helper.rnhs(query, cands, upper_bound)
-    return [{"score": ret[i]['score'], "desc": ret[i]['desc'], "title": ret[i]['title'], "data": ret[i]} for i in range(len(ret))]
+    return ret
 
 def identipy_rnhs2(cands, query):
     import scipy
@@ -57,7 +58,6 @@ def identipy_rnhs2(cands, query):
         seq_masses.append(c.mass)
     theoreticals = numpy.asarray(theoreticals).reshape((-1, 1))
     tree = sklearn.neighbors.KDTree(theoreticals)
-    import sys
     dists = []
     inds = []
     dists, inds = tree.query(mz_array, k=1, sort_results=False, dualtree=False)
@@ -290,8 +290,9 @@ def search_core(start, end):
     batch_size = blackboard.config['performance'].getint('score batch size')
 
     cur = blackboard.CONN.cursor()
+    res_cur = blackboard.RES_CONN.cursor()
 
-    blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end+1))
+    blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     queries = [{k:(v if k not in ('spec', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.QUERY_COLS, data)} for data in cur.fetchall()]
 
     for iq, q in enumerate(queries):
@@ -299,14 +300,37 @@ def search_core(start, end):
             blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
             
             while True:
-                cands = [{k:(v if k not in ('spec', 'mods') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, res)} for res in cur.fetchmany(batch_size)]
+                #cands = [{k:(v if k not in ('spec', 'mods', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, res)} for res in cur.fetchmany(batch_size)]
+                cands = []
+                for res in cur.fetchmany(batch_size):
+                    cand = {}
+                    for k, v in zip(blackboard.DB_COLS, res):
+                        if k not in ('spec', 'mods', 'meta'):
+                            cand[k] = v
+                        else:
+                            cand[k] = pickle.loads(v)
+                    cands.append(cand)        
                 if len(cands) == 0:
                     break
-                #import sys
-                #sys.stderr.write("Final cand is {} (should be {}-{}) (idxs are {} - {} and batch is {} - {})\n".format(cands[-1]['mass'], q['min_mass'], q['max_mass'], start, end, i, min(i + batch_size, cands_end)))
                 res = scoring_fn(cands, q)
-                blackboard.executemany(cur, blackboard.maybe_insert_str("results", blackboard.RES_COLS), [tuple([(row[k] if k != 'data' else pickle.dumps(row[k])) for k in blackboard.RES_COLS]) for row in res])
-            blackboard.commit()
+                #res = [{'title': q['title'], 'desc': cands[_]['desc'], 'seq': cands[_]['seq'], 'modseq': cands[_]['seq'], 'score': 1.0} for _ in range(len(cands))]
+                for r in res:
+                    r['spec'] = None
+                    r['data'] = copy.deepcopy(r)
+                #out_data = [tuple([(row[k] if k != 'data' else pickle.dumps(row[k])) for k in blackboard.RES_COLS]) for row in res]
+                out_data = []
+                for row in res:
+                    out_data.append([])
+                    for k in blackboard.RES_COLS:
+                        if k == 'data':
+                            out_data[-1].append(pickle.dumps(row[k]))
+                        else:
+                            out_data[-1].append(row[k])
+                    out_data[-1] = tuple(out_data[-1])
+                blackboard.executemany(res_cur, blackboard.maybe_insert_str("results", blackboard.RES_COLS), out_data)
+                #import sys
+                #sys.stderr.write("[{}] {} resulted in {} updates!\n".format(blackboard.RES_DB_PATH, blackboard.insert_all_str("results", blackboard.RES_COLS), res_cur.rowcount))
+                blackboard.RES_CONN.commit()
 
 def prepare_search():
     """

@@ -3,6 +3,7 @@ import struct
 import os
 import node
 import time
+import sys
 
 class SearchNode(node.Node):
     def __init__(self, unix_sock):
@@ -17,14 +18,14 @@ class SearchNode(node.Node):
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
-        import cProfile
-        from pstats import SortKey
-        #cProfile.run("import search; search.search_core({}, {})".format(start, end), 'profile{}.log'.format(start), SortKey.CUMULATIVE)
         search.search_core(start, end)
 
     def prepare(self, msg):
         lgt = struct.unpack("!I", msg[:4])[0]
-        self.path = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
+        blackboard.TMP_PATH = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
+        self.path = blackboard.TMP_PATH
+        blackboard.init_results_db(True, base_dir=blackboard.TMP_PATH)
+        blackboard.prepare_connection()
 
 if __name__ == '__main__':
     node.init(SearchNode)
