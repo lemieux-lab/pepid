@@ -9,9 +9,8 @@ import time
 import os
 import random
 import copy
-import pickle
-
 import helper
+import pickle
 
 class DbSettings():
     def __init__(self):
@@ -60,18 +59,16 @@ def count_peps():
     Returns how many entries exist in the processed database
     """
 
-    return helper.count(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index.bin", helper.KEY_TYPE)
+    cur = blackboard.CONN.cursor()
+    blackboard.execute(cur, "SELECT COUNT(*) FROM candidates;")
+    return cur.fetchone()[0]
 
-def pred_rt(cands, n):
+def pred_rt(cands):
     """
     Dummy function for retention time prediction that just outputs 0.
     """
 
-    ret = helper.get_buffer(helper.RT_TYPE, n)
-    for i in range(n):
-        ret[i] = 0.0
-
-    return ret
+    return [0.0] * len(cands)
 
 def identipy_theoretical_spectrum(cands, n):
     """
@@ -92,7 +89,7 @@ def identipy_theoretical_spectrum(cands, n):
 
     return ret
 
-def theoretical_spectrum(cands, n):
+def theoretical_spectrum(cands):
     """
     Simple spectrum prediction function generating b- and y-series ions
     without charged variants
@@ -101,21 +98,17 @@ def theoretical_spectrum(cands, n):
     cterm = blackboard.config['search'].getfloat('cterm cleavage')
     nterm = blackboard.config['search'].getfloat('nterm cleavage')
 
-    ret = helper.get_buffer(helper.SPEC_TYPE, n)
+    ret = []
 
-    for i in range(n):
-        seq = cands[i].sequence.decode('ascii')
-        mod = numpy.zeros((cands[i].length,))
-        for im in range(cands[i].length):
-            mod[im] = cands[i].mods[im]
+    for i in range(len(cands)):
+        seq = cands[i]['seq']
+        mod = cands[i]['mods']
         th_masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm)
-        for im, m in enumerate(th_masses):
-            ret[i][im][0] = m
-            ret[i][im][1] = 1
+        ret.append(th_masses.tolist())
 
     return ret
 
-def user_processing(data, n):
+def user_processing(start, end):
     """
     Parses the spectrum prediction and rt prediction functions from config
     and applies them to the candidate peptides, adding the result to the corresponding candidate
@@ -139,25 +132,21 @@ def user_processing(data, n):
         import sys
         sys.stderr.write("[db post]: user spectrum prediction function not found, using default function instead\n")
 
-    arr = data
- 
-    rts_raw = rt_fn(arr, n)
-    rts = numpy.asarray([x for x in rts_raw])
-    specs_raw = spec_fn(arr, n)
+    cur = blackboard.CONN.cursor()
+    blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+
+    ret = cur.fetchall()
+    data = [{k:(v if k not in ('spec', 'mods') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, results)} for results in ret]
+
+    rts = rt_fn(data)
+    specs = spec_fn(data)
     max_peaks = blackboard.config['search'].getint('max peaks')
-    specs = numpy.asarray([numpy.pad(numpy.asarray([[xx[0], xx[1]] for xx in x]).reshape((-1, 2))[:max_peaks], ((0, max(0, max_peaks - len(x))), (0, 0))) for x in specs_raw])
-    spec_npeaks = numpy.asarray(list(map(lambda x: numpy.where(x[:,0] == 0)[0][0], specs)))
 
-    for i in range(n):
-        arr[i].rt = rts[i]
-        arr[i].npeaks = spec_npeaks[i]
-        for j in range(specs.shape[0]):
-            arr[i].spec[j][0] = specs[i][j][0]
-            arr[i].spec[j][1] = specs[i][j][1]
+    specs = [pickle.dumps(spec[:min(len(spec), max_peaks)]) for spec in specs]
+    rowids = list(range(start+1, end+1))
 
-    helper.free(specs_raw)
-    helper.free(rts_raw)
-    return arr
+    blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
+    blackboard.commit()
 
 def process_entry(description, buff, settings):
     data = []
@@ -213,11 +202,9 @@ def process_entry(description, buff, settings):
                 for var in var_set:
                     mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                     if settings.min_mass <= mass <= settings.max_mass:
-                        data.append([description, peps[j], var, 0.0, len(peps[j]), mass, repr(None)])
-
+                        data.append({"desc": description, "seq": peps[j], "mods": var, "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": None})
     return data
 
-# XXX: TODO: in post-processing (see: sorting in search), remove duplicate peptides-mods (doing so requires peptide-order external sort, maybe use single/double argsort)
 def fill_db(start, end):
     """
     Processes database entries, performing digestion and generating variable mods as needed.
@@ -255,35 +242,21 @@ def fill_db(start, end):
         peps = process_entry(desc, buff, settings)
         data.extend(peps)
 
-    seqmods = [d[1] + repr(d[2]) for d in data]
-    uniques = numpy.unique(seqmods, return_index=True)[-1]
-
-    #arr = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "predb{}.npy".format(start)), mode="w+", dtype=blackboard.DB_DTYPE, shape=len(uniques))
-    arr = numpy.zeros(dtype=blackboard.KEY_DATA_DTYPE + [('mass', 'float32')], shape=len(uniques))
-    i = 0
-    for k in uniques:
-        d = data[k]
-        if len(data[0]) == 0:
-            continue
-        arr[i]['seq'] = d[1]
-        arr[i]['mods'] = numpy.pad(d[2][:128], (0, max(0, 128 - len(d[2]))))
-        arr[i]['mass'] = d[5]
-        arr[i]['desc'] = d[0]
-        i += 1
-    helper.dump_key(os.path.join(blackboard.config['data']['tmpdir'], "key{}.bin".format(start)), arr['mass'], offset=0, erase=True)
-    helper.dump_seq(os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(start)), arr[['desc', 'seq', 'mods']], offset=0, erase=True)
-    del arr
-
-def inflate(start, end):
-    keys = helper.load_key(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index.bin", start, end)
-    ret, n_ret = helper.load_db(blackboard.DB_PATH, start, end)
-    ret = user_processing(ret, n_ret)
-    helper.dump_db(blackboard.DB_PATH, ret, n_ret, offset=start, erase=False)
-    helper.free(ret)
+    cur = blackboard.CONN.cursor()
+    data = [tuple([(row[k] if k not in ('spec', 'mods') else pickle.dumps(row[k])) for k in blackboard.DB_COLS]) for row in data]
+    blackboard.executemany(cur, blackboard.insert_all_str("candidates", blackboard.DB_COLS), data)
+    cur.close()
+    blackboard.commit()
+    time.sleep(1)
 
 def prepare_db():
     """
     Creates table in the temporary database which is needed for protein database processing
     """
 
-    pass
+    cur = blackboard.CONN.cursor()
+    blackboard.execute(cur, "DROP INDEX IF EXISTS cand_mass_idx;")
+    blackboard.execute(cur, "DROP TABLE IF EXISTS candidates;")
+    blackboard.execute(cur, blackboard.create_table_str("candidates", blackboard.DB_COLS, blackboard.DB_TYPES, ["UNIQUE(seq, mods) ON CONFLICT IGNORE"]))
+    cur.close()
+    blackboard.commit()

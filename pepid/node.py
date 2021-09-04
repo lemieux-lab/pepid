@@ -55,6 +55,7 @@ class Node():
                     import sys
                     sys.stderr.write("NODE: Got wrong code {}\n".format(msg[0]))
 
+        blackboard.CONN.close()
         conn.close()
         sock.close()
 
@@ -70,8 +71,8 @@ def init(klass):
         blackboard.config.read(sys.argv[2])
 
     blackboard.setup_constants()
-    blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
-    blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
+    blackboard.prepare_connection()
+    blackboard.LOCK = open(os.path.join(blackboard.config['data']['tmpdir'], ".lock"), "wb")
 
     this = klass(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket_" + sock))
     this.start()

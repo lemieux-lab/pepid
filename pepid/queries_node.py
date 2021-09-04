@@ -20,6 +20,7 @@ class QueryNode(node.Node):
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
         queries.fill_queries(start, end)
+        blackboard.CONN.commit()
 
     def do_post(self, start, end, _):
         import queries
@@ -28,6 +29,7 @@ class QueryNode(node.Node):
             raise ValueError("'do_post' message received before 'prepare' message, aborting.")
 
         queries.user_processing(start, end)
+        blackboard.CONN.commit()
 
     def prepare(self, msg):
         lgt = struct.unpack("!I", msg[:4])[0]

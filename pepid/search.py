@@ -8,12 +8,14 @@ import os
 import re
 import helper
 import functools
+import pickle
 
 def crnhs(cands, query):
     acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
     acc = blackboard.config['search'].getfloat('peak matching tolerance')
     upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
-    return helper.rnhs(query, cands[0], cands[1], upper_bound)
+    ret = helper.rnhs(query, cands, upper_bound)
+    return [{"score": ret[i]['score'], "desc": ret[i]['desc'], "title": ret[i]['title'], "data": ret[i]} for i in range(len(ret))]
 
 def identipy_rnhs2(cands, query):
     import scipy
@@ -276,8 +278,6 @@ def search_core(start, end):
     tol = blackboard.config['search'].getfloat('peak matching tolerance')
     is_ppm = blackboard.config['search']['matching unit'] == "ppm"
 
-    queries = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "query{}.npy".format(start)), dtype=blackboard.QUERY_DTYPE, shape=blackboard.config['performance'].getint('batch size'), mode='r')
-
     scoring_fn = rnhs
     try:
         mod, fn = blackboard.config['scoring']['score function'].rsplit('.', 1)
@@ -289,23 +289,24 @@ def search_core(start, end):
 
     batch_size = blackboard.config['performance'].getint('score batch size')
 
+    cur = blackboard.CONN.cursor()
+
+    blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end+1))
+    queries = [{k:(v if k not in ('spec', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.QUERY_COLS, data)} for data in cur.fetchall()]
+
     for iq, q in enumerate(queries):
         if(q['mass'] > 0):
-            cands_start, cands_end = helper.find(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index.bin", helper.KEY_TYPE, q['min_mass'], q['max_mass'])
-            if cands_start >= 0:
-                if cands_end < 0:
-                    cands_end = cands_start
-                for i in range(cands_start, cands_end, batch_size):
-                    cands, n_cands = helper.load_db(blackboard.DB_PATH, start=i, end=min(i + batch_size, cands_end+1))
-                    if(n_cands > 0):
-                        scores, score_data = scoring_fn((cands, n_cands), q)
-                        results = helper.make_res(scores, score_data, q, cands, n_cands)
-                        #helper.lock()
-                        helper.dump_res(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_search.bin", results, n_cands, offset=start + i - cands_start)
-                        #helper.unlock()
-                        helper.free(results)
-                        helper.free(cands)
-                        helper.free_score(score_data)
+            blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
+            
+            while True:
+                cands = [{k:(v if k not in ('spec', 'mods') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, res)} for res in cur.fetchmany(batch_size)]
+                if len(cands) == 0:
+                    break
+                #import sys
+                #sys.stderr.write("Final cand is {} (should be {}-{}) (idxs are {} - {} and batch is {} - {})\n".format(cands[-1]['mass'], q['min_mass'], q['max_mass'], start, end, i, min(i + batch_size, cands_end)))
+                res = scoring_fn(cands, q)
+                blackboard.executemany(cur, blackboard.maybe_insert_str("results", blackboard.RES_COLS), [tuple([(row[k] if k != 'data' else pickle.dumps(row[k])) for k in blackboard.RES_COLS]) for row in res])
+            blackboard.commit()
 
 def prepare_search():
     """

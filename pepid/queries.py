@@ -6,6 +6,7 @@ import pepid_utils
 import time
 import random
 import os
+import pickle
 
 def count_queries():
     """
@@ -22,11 +23,12 @@ def fill_queries(start, end):
     Processes batch of queries and put them in the temporary database for futher processing.
     """
     
-    arr = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "query{}.npy".format(start)), mode="w+", dtype=blackboard.QUERY_DTYPE, shape=blackboard.config['performance'].getint('batch size'))
     f = open(blackboard.config['data']['queries'], 'r')
 
     tol_l, tol_r = list(map(lambda x: float(x.strip()), blackboard.config['search']['candidate filtering tolerance'].split(",")))
     is_ppm = blackboard.config['search']['filtering unit'] == "ppm"
+
+    data = []
 
     entry_idx = -1
     for l in f:
@@ -44,6 +46,7 @@ def fill_queries(start, end):
             break
         else:
             if l[:len("TITLE=")] == "TITLE=":
+                data.append({k:None for k in blackboard.QUERY_COLS})
                 title = l[len("TITLE="):].strip()
             elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
                 rt = int(l[len("RTINSECONDS="):].strip())
@@ -55,22 +58,23 @@ def fill_queries(start, end):
                 precmass = (precmass * charge) - charge
                 delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
                 delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
-                arr[entry_idx - start]['title'] = title
-                arr[entry_idx - start]['rt'] = rt
-                arr[entry_idx - start]['charge'] = charge
-                arr[entry_idx - start]['mass'] = precmass
-                max_peaks = blackboard.config['search'].getint('max peaks')
-                arr[entry_idx - start]['spec'] = numpy.pad(numpy.asarray(list(zip(mz_arr, intens_arr)))[:max_peaks, :], ((0, max(0, max_peaks - len(mz_arr))), (0, 0)))
-                arr[entry_idx - start]['npeaks'] = len(mz_arr)
-                arr[entry_idx - start]['min_mass'] = precmass + delta_l
-                arr[entry_idx - start]['max_mass'] = precmass + delta_r
-                arr[entry_idx - start]['meta'] = repr(None)
+                data[-1]['title'] = title
+                data[-1]['rt'] = rt
+                data[-1]['charge'] = charge
+                data[-1]['mass'] = precmass
+                data[-1]['spec'] = list(zip(mz_arr, intens_arr))
+                data[-1]['min_mass'] = precmass + delta_l
+                data[-1]['max_mass'] = precmass + delta_r
+                data[-1]['meta'] = None
                 
             elif '0' <= l[0] <= '9':
                 mz, intens = l.split(maxsplit=1)
                 mz_arr.append(float(mz))
                 intens_arr.append(float(intens))
-    arr.flush()
+    cur = blackboard.CONN.cursor()
+    blackboard.executemany(cur, blackboard.insert_all_str("queries", blackboard.QUERY_COLS), [tuple([(row[k] if k not in ('meta', 'spec') else pickle.dumps(row[k])) for k in blackboard.QUERY_COLS]) for row in data])
+    cur.close()
+    blackboard.commit()
 
 def user_processing(start, end):
     """
@@ -103,14 +107,24 @@ def user_processing(start, end):
     if metadata_fn is None:
         return
 
-    data = numpy.memmap(os.path.join(blackboard.config['data']['tmpdir'], "query{}.npy".format(start)), dtype=blackboard.QUERY_DTYPE, shape=blackboard.config['performance'].getint('batch size'), mode='r+')
+    cur = blackboard.CONN.cursor()
+    blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS + ["rowid"], "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+    rowids = []
+    data = []
+    for datum in cur.fetchall():
+        data.append({k:(v if k not in ('spec', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.QUERY_COLS, datum[:-1])})
+        rowids.append(datum[-1])
     meta = metadata_fn(data[:end-start])
-    data[:end-start]['meta'] = list(map(repr, meta))
-    data.flush()
+    blackboard.executemany(cur, "UPDATE queries SET meta = ? WHERE rowid = ?;", [(pickle.dumps(meta[i]), rowids[i]) for i in range(len(meta))])
+    cur.close()
 
-def prepare_queries():
+def prepare_db():
     """
     Creates the required tables in the temporary database for queries processing
     """
 
-    pass
+    cur = blackboard.CONN.cursor()
+    blackboard.execute(cur, "DROP TABLE IF EXISTS queries;")
+    blackboard.execute(cur, blackboard.create_table_str("queries", blackboard.QUERY_COLS, blackboard.QUERY_TYPES))
+    cur.close()
+    blackboard.commit()

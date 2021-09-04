@@ -162,9 +162,21 @@ void reorder(char*, char*, char*, uint64_t, uint64_t);
 
 res* make_res(double*, score_ret, char*, float, float, int, db*, int);
 
+typedef struct {
+    void* cands;
+    int n_cands;
+    int npeaks;
+    uint64_t elt_size;
+    float tol;
+    void* q;
+} score_data;
+
 void free_ret(ret);
 void free_ptr(void*);
 void free_score(score_ret*);
 
 thread_pool pool;
-score_ret rnhs(query*, void*, int, int, uint64_t, float);
+//score_ret rnhs(void*, query*, void*, int, int, uint64_t, float);
+score_ret* rnhs(score_data);
+void* alloc(uint64_t);
+char* score_str(score_ret*, int);

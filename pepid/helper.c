@@ -764,25 +764,35 @@ void free_score(score_ret* score) {
     free(score->total_matched);
     free(score->theoretical);
     free(score->spec);
+    free(score);
 }
 
-score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size, float tol) {
-    score_ret r;
-    r.ncands = n_cands;
-    r.npeaks = q->npeaks;
-    r.distances = calloc(n_cands * npeaks, sizeof(double));
-    r.mask = calloc(n_cands, sizeof(char));
-    r.scores = calloc(n_cands, sizeof(double));
-    r.sumI = calloc(n_cands, sizeof(double));
-    r.total_matched = calloc(n_cands, sizeof(uint32_t));
-    r.theoretical = calloc(n_cands * npeaks * 2, sizeof(float));
-    r.spec = calloc(n_cands * npeaks * 2, sizeof(float));
+//score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size, float tol) {
+score_ret* rnhs(score_data d) {
+    query* q = d.q;
+    void* cands = d.cands;
+    int n_cands = d.n_cands;
+    int npeaks = d.npeaks;
+    uint64_t elt_size = d.elt_size;
+    float tol = d.tol;
+
+    score_ret* r = calloc(sizeof(score_ret), 1);
+    r->ncands = n_cands;
+    r->npeaks = q->npeaks;
+    r->distances = calloc(n_cands * npeaks, sizeof(double));
+    r->mask = calloc(n_cands * npeaks, sizeof(char));
+    r->scores = calloc(n_cands, sizeof(double));
+    r->sumI = calloc(n_cands, sizeof(double));
+    r->total_matched = calloc(n_cands, sizeof(uint32_t));
+    r->theoretical = calloc(n_cands * npeaks * 2, sizeof(float));
+    r->spec = calloc(n_cands * npeaks * 2, sizeof(float));
 
     int32_t* indices = calloc(n_cands * npeaks, sizeof(int32_t));
     memset(indices, -1, n_cands * npeaks * sizeof(int32_t));
     uint32_t* prev_inds = calloc(n_cands, sizeof(uint32_t));
 
     double intens_norm = 0;
+
     #ifdef HELPER_BSEARCH
     for(int i = 0; i < q->npeaks; i++) {
         intens_norm += q->spec[i][1];
@@ -797,11 +807,11 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
             float dist_next = q->spec[i][0] - cand->spec[idx+1][0];
             if(dist < dist_next && dist < tol) {
                 prev_inds[j] = idx;
-                r.distances[j * npeaks + idx] = dist;
+                r->distances[j * npeaks + idx] = dist;
                 indices[j * npeaks + idx] = idx;
             } else if(dist_next < tol) {
                 prev_inds[j] = idx+1;
-                r.distances[j * npeaks + idx+1] = dist_next;
+                r->distances[j * npeaks + idx+1] = dist_next;
                 indices[j * npeaks + idx+1] = idx+1;
             }
         }
@@ -812,7 +822,7 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
         for(int j = 0; j < n_cands; j++) {
             db* cand = ((db*)(cands + elt_size * j));
             int candpeaks = cand->npeaks;
-            
+
             for(int k = prev_inds[j]; k < candpeaks; k++) {
                 double this_dist = q->spec[i][0] - cand->spec[k][0];
                 if(this_dist > 0) {
@@ -820,8 +830,8 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
                 }
                 double abs_dist = ABS(this_dist);
                 if(abs_dist < tol) {
-                    if(abs_dist < r.distances[j * npeaks + k]) {
-                        r.distances[j * npeaks + k] = abs_dist;
+                    if((r->distances[j * npeaks + k] == 0) || (abs_dist < r->distances[j * npeaks + k])) {
+                        r->distances[j * npeaks + k] = abs_dist;
                         indices[j * npeaks + k] = k;
                     }
                 } else if(this_dist < 0) {
@@ -835,8 +845,10 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
 
     for(int j = 0; j < n_cands; j++) {
         db* cand = ((db*)(cands + elt_size * j));
+
         uint64_t* mult = calloc(n_cands, sizeof(uint64_t));
         uint32_t mult_idx = 0;
+
         double score = 0;
         uint32_t total_matched = 0;
         double total_intens = 0;
@@ -846,8 +858,8 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
 
         for(int i = 0; i < cand->npeaks; i++) {
             if(indices[j * npeaks + i] >= 0) {
-                r.mask[i] = 1;
-                n_matched += 1;
+                r->mask[j * npeaks + i] = 1;
+                n_matched++;
                 intens_sum += q->spec[i][1];
             }
         }
@@ -856,7 +868,7 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
             mult[mult_idx] = FACT[MIN(n_matched, 20)];
             mult_idx++;
             total_intens += intens_sum;
-            score += intens_sum / intens_norm;
+            score += (float)(intens_sum) / intens_norm;
         }
         if(total_matched == 0) {
             free(mult);
@@ -865,16 +877,16 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
         for(int i = 0; i < mult_idx; i++) {
             score *= mult[i]; 
         }
-        r.scores[j] = score;
-        r.sumI[j] = (total_intens != 0)? log10(total_intens) : 0;
-        r.total_matched[j] = total_matched;
+        r->scores[j] = score;
+        r->sumI[j] = (total_intens != 0)? log10(total_intens) : 0;
+        r->total_matched[j] = total_matched;
         for(int i = 0; i < cand->npeaks; i++) {
-            r.theoretical[j*2*npeaks + i*2] = cand->spec[i][0];
-            r.theoretical[j*2*npeaks + i*2 + 1] = cand->spec[i][1];
+            r->theoretical[j*2*npeaks + i*2] = cand->spec[i][0];
+            r->theoretical[j*2*npeaks + i*2 + 1] = cand->spec[i][1];
         }
         for(int i = 0; i < q->npeaks; i++) {
-            r.spec[j*2*npeaks + i*2] = q->spec[i][0];
-            r.spec[j*2*npeaks + i*2 + 1] = q->spec[i][1];
+            r->spec[j*2*npeaks + i*2] = q->spec[i][0];
+            r->spec[j*2*npeaks + i*2 + 1] = q->spec[i][1];
         }
         free(mult);
     }
@@ -882,4 +894,127 @@ score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size
     free(indices);
     free(prev_inds);
     return r;
+}
+
+void* alloc(uint64_t n) {
+    return calloc(1, n);
+}
+
+int print_char_array(char** str, int offset, int* capacity, char* arr, int n_elts) {
+    int orig_offset = offset;
+    char* fmt_str = "%d,%d,%d,%d";
+    char* fmt_str3 = "%d,%d,%d";
+    char* fmt_str2 = "%d,%d";
+    for(int i = 0; i < n_elts; i += 4) {
+        if(i != 0) {
+            offset += snprintf(*str + offset, *capacity - offset, ",");
+        }
+        int new_offset = snprintf(*str + offset, *capacity - offset, fmt_str, arr[i], arr[i+1], arr[i+2], arr[i+3]);
+        if(new_offset >= *capacity - offset) {
+            *capacity = MAX(2 * *capacity, *capacity - offset + new_offset);
+            char* new_str = calloc(sizeof(char), *capacity);
+            strcpy(new_str, *str);
+            free(*str);
+            *str = new_str;
+            new_offset = snprintf(*str + offset, *capacity - offset, fmt_str, arr[i], arr[i+1], arr[i+2], arr[i+3]);
+        }
+        offset += new_offset;
+    }
+
+    if(n_elts % 4 != 0) {
+        offset += snprintf(*str + offset, *capacity - offset, ",");
+    }
+
+    char done = 0;
+    int new_offset = 0;
+    while(!done) {
+        switch(n_elts % 4) {
+            case 3:
+                new_offset = snprintf(*str + offset, *capacity - offset, fmt_str3, arr[n_elts-3], arr[n_elts-2], arr[n_elts-1]);
+                break;
+            case 2:
+                new_offset = snprintf(*str + offset, *capacity - offset, fmt_str2, arr[n_elts-2], arr[n_elts-1]);
+                break;
+            case 1:
+                new_offset = snprintf(*str + offset, *capacity - offset, "%d", arr[n_elts-1]);
+                break;
+            default: break; /* 0 */
+        }
+        if(new_offset >= *capacity - offset) {
+            *capacity = MAX(2 * *capacity, *capacity - offset + new_offset);
+            char* new_str = calloc(sizeof(char), *capacity);
+            strcpy(new_str, *str);
+            free(*str);
+            *str = new_str;
+        } else {
+            done = 1;
+            offset += new_offset;
+        }
+    }
+    return offset - orig_offset;
+}
+
+int print_double_array(char** str, int offset, int* capacity, double* arr, int n_elts) {
+    int orig_offset = offset;
+    char* fmt_str = "%f,%f,%f,%f";
+    char* fmt_str3 = "%f,%f,%f";
+    char* fmt_str2 = "%f,%f";
+    for(int i = 0; i < n_elts; i += 4) {
+        if(i != 0) {
+            offset += snprintf(*str + offset, *capacity - offset, ",");
+        }
+        int new_offset = snprintf(*str + offset, *capacity - offset, fmt_str, arr[i], arr[i+1], arr[i+2], arr[i+3]);
+        if(new_offset >= *capacity - offset) {
+            *capacity = MAX(2 * *capacity, *capacity - offset + new_offset);
+            char* new_str = calloc(sizeof(char), *capacity);
+            strcpy(new_str, *str);
+            free(*str);
+            *str = new_str;
+            new_offset = snprintf(*str + offset, *capacity - offset, fmt_str, arr[i], arr[i+1], arr[i+2], arr[i+3]);
+        }
+        offset += new_offset;
+    }
+
+    if(n_elts % 4 != 0) {
+        offset += snprintf(*str + offset, *capacity - offset, ",");
+    }
+
+    char done = 0;
+    int new_offset = 0;
+    while(!done) {
+        switch(n_elts % 4) {
+            case 3:
+                new_offset = snprintf(*str + offset, *capacity - offset, fmt_str3, arr[n_elts-3], arr[n_elts-2], arr[n_elts-1]);
+                break;
+            case 2:
+                new_offset = snprintf(*str + offset, *capacity - offset, fmt_str2, arr[n_elts-2], arr[n_elts-1]);
+                break;
+            case 1:
+                new_offset = snprintf(*str + offset, *capacity - offset, "%f", arr[n_elts-1]);
+                break;
+            default: break; /* 0 */
+        }
+        if(new_offset >= *capacity - offset) {
+            *capacity = MAX(2 * *capacity, *capacity - offset + new_offset);
+            char* new_str = calloc(sizeof(char), *capacity);
+            strcpy(new_str, *str);
+            free(*str);
+            *str = new_str;
+        } else {
+            done = 1;
+            offset += new_offset;
+        }
+    }
+    return offset - orig_offset;
+}
+
+char* score_str(score_ret* data, int n) {
+    int max_size = 10240;
+    char* ret = calloc(sizeof(char), max_size);
+    int printed = snprintf(ret, max_size, "{'score':%f,'mask':[", data->scores[n]);
+    printed += print_char_array(&ret, printed, &max_size, data->mask + (data->npeaks * n), data->npeaks);
+    printed += snprintf(ret + printed, max_size - printed, "],'distances':[");
+    printed += print_double_array(&ret, printed, &max_size, data->distances + (data->npeaks * n), data->npeaks);
+    printed += snprintf(ret + printed, max_size - printed, "],'total_matched':%d,'sumI':%f}", data->total_matched[n], data->sumI[n]);
+    return ret;
 }

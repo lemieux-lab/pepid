@@ -197,7 +197,6 @@ def run():
 
     blackboard.setup_constants()
 
-    import helper
     import queries
     import db
     import processing
@@ -210,8 +209,21 @@ def run():
                                     ("Search | " if blackboard.config['pipeline'].getboolean('search') else "") +
                                     ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else ""))
         log.info("Preparing Input Databases...")
-        db.prepare_db()
-        queries.prepare_queries()
+        if blackboard.config['pipeline'].getboolean('db processing'):
+            if os.path.exists(blackboard.DB_PATH):
+                os.remove(blackboard.DB_PATH)
+        blackboard.prepare_connection()
+        queries.prepare_db()
+        if blackboard.config['pipeline'].getboolean('db processing'):
+            db.prepare_db()
+        cur = blackboard.CONN.cursor()
+        blackboard.execute(cur, "DROP INDEX IF EXISTS res_score_idx;")
+        blackboard.execute(cur, "DROP TABLE IF EXISTS results;")
+        blackboard.execute(cur, blackboard.create_table_str("results", blackboard.RES_COLS, [t if i != blackboard.RES_COLS.index("score") else t + " CHECK(score > 0)" for i, t in enumerate(blackboard.RES_TYPES)]))
+        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (score DESC);")
+        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS cand_mass_idx ON candidates (mass ASC);")
+        blackboard.CONN.commit()
+
         log.info("Preparing Input Processing Nodes...")
         
         qnodes = blackboard.config['performance'].getint('query nodes')
@@ -245,39 +257,7 @@ def run():
         dbnodes = blackboard.config['performance'].getint('post db nodes')
 
         batch_start = 0
-        n_peps = 0
-        if blackboard.config['pipeline'].getboolean('db processing'):
-            log.info("DB: Sorted Key Index...")
-            n_peps = helper.sort([os.path.join(blackboard.config['data']['tmpdir'], "key{}".format(i * batch_size)) for i in range(n_db_batches)], blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index", helper.KEY_TYPE)
-
-            out_seq_fname = blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_seq.bin"
-            _ = open(out_seq_fname, "wb")
-            _.close()
-            for f in [os.path.join(blackboard.config['data']['tmpdir'], "seq{}.bin".format(i*batch_size)) for i in range(n_db_batches)]:
-                os.system("cat '{}' >> '{}'".format(f, out_seq_fname)) # XXX
-
-            n_db = n_peps
-            n_db_batches = math.ceil(n_db / batch_size)
-
-            # Ensure blank file exists
-            f = open(blackboard.DB_PATH, "wb")
-            f.close()
-
-            log.info("DB: Sort values based on index...")
-            helper.reorder(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_idx.bin", blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_seq.bin", blackboard.DB_PATH)
-            os.remove(blackboard.DB_PATH.rsplit(".bin", 1)[0] + "_index_idx.bin")
-            log.info("DB: Data sorted")
-
-            dbspec = [("db_node.py", dbnodes, n_db_batches,
-                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                            [struct.pack("!cQQc", bytes([0x03]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
-                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
-
-            handle_nodes("Fill DB Metadata", dbspec)
-        else:
-            n_peps = db.count_peps()
-
-        n_db = n_peps
+        n_db = db.count_peps()
         n_db_batches = math.ceil(n_db / batch_size)
 
         if blackboard.config['pipeline'].getboolean('postprocessing'):
@@ -313,21 +293,15 @@ def run():
 
     finally:
         log.info("Cleaning up...")
-        if len(blackboard.TMP_PATH) > 0:
-            os.system("rm -rf {}".format(blackboard.TMP_PATH))
         if len(blackboard.config['data']['tmpdir']) > 0:
             import glob
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepidtmp*")))
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.npy")))
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "predb*.bin")))
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "seq*.bin")))
-            #os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*_*.bin")))
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "*.pkl")))
             # Note: db not removed in case it is to be reused.
-        if blackboard.LOCK is not None:
-            blackboard.LOCK.close()
-            os.system("rm -rf {}".format(os.path.join(blackboard.TMP_PATH, ".lock")))
+
+            if blackboard.LOCK is not None:
+                blackboard.LOCK.close()
+                os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], ".lock")))
 
 if __name__ == "__main__":
     if(len(sys.argv) != 2):
@@ -346,6 +320,6 @@ if __name__ == "__main__":
     log = logging.getLogger("pepid")
 
     blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
-    blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
+    blackboard.LOCK = open(os.path.join(blackboard.config['data']['tmpdir'], ".lock"), "wb")
 
     run()

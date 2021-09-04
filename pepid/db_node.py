@@ -12,7 +12,6 @@ class DbNode(node.Node):
         self.messages[0x00] = [None, self.prepare]
         self.messages[0x01] = ["!QQc", self.do]
         self.messages[0x02] = ["!QQc", self.do_post]
-        self.messages[0x03] = ["!QQc", self.inflate]
 
     def do(self, start, end, _):
         import db
@@ -20,20 +19,16 @@ class DbNode(node.Node):
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
         db.fill_db(start, end)
+        blackboard.CONN.commit()
 
     def do_post(self, start, end, _):
-        pass
+        import db
+        db.user_processing(start, end)
+        blackboard.CONN.commit()
 
     def prepare(self, msg):
         lgt = struct.unpack("!I", msg[:4])[0]
         self.path = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
-
-    def inflate(self, start, end, _):
-        import db
-        if not self.path:
-            raise ValueError("'inflate' message received before 'prepare' message, aborting.")
-
-        db.inflate(start, end)
 
 if __name__ == '__main__':
     node.init(DbNode)
