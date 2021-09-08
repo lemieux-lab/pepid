@@ -296,7 +296,7 @@ def run():
                 blackboard.commit()
                 blackboard.execute(cur, "DETACH DATABASE results_part;")
                 os.remove(f)
-            blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (score DESC);")
+            blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (title ASC, score DESC);")
             del cur
 
         if blackboard.config['pipeline'].getboolean('postprocess search'):
@@ -334,10 +334,7 @@ if __name__ == "__main__":
     log = logging.getLogger("pepid")
 
     blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
-    import sys
-    sys.stderr.write("TMP_PATH is {}...\n".format(blackboard.TMP_PATH))
     if(not os.path.exists(blackboard.TMP_PATH)):
-        sys.stderr.write("Creating {}\n".format(blackboard.TMP_PATH))
         os.mkdir(blackboard.TMP_PATH)
 
     blackboard.LOCK = open(os.path.join(blackboard.config['data']['tmpdir'], ".lock"), "wb")
