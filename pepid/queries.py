@@ -125,6 +125,6 @@ def prepare_db():
 
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, "DROP TABLE IF EXISTS queries;")
-    blackboard.execute(cur, blackboard.create_table_str("queries", blackboard.QUERY_COLS, blackboard.QUERY_TYPES))
+    blackboard.execute(cur, blackboard.create_table_str("q.queries", blackboard.QUERY_COLS, blackboard.QUERY_TYPES))
     cur.close()
     blackboard.commit()

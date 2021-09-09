@@ -268,6 +268,6 @@ def prepare_db():
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, "DROP INDEX IF EXISTS cand_mass_idx;")
     blackboard.execute(cur, "DROP TABLE IF EXISTS candidates;")
-    blackboard.execute(cur, blackboard.create_table_str("candidates", blackboard.DB_COLS, blackboard.DB_TYPES, ["UNIQUE(seq, mods) ON CONFLICT IGNORE"]))
+    blackboard.execute(cur, blackboard.create_table_str("c.candidates", blackboard.DB_COLS, blackboard.DB_TYPES, ["UNIQUE(seq, mods) ON CONFLICT IGNORE"]))
     cur.close()
     blackboard.commit()

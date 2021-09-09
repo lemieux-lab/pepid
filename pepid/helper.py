@@ -4,7 +4,6 @@ import numpy
 import fcntl
 import os
 import pickle
-import signal
 
 lib = ctypes.cdll.LoadLibrary("./libhelper.so")
 
@@ -100,7 +99,7 @@ def query_to_c(q):
 
     return ctypes.cast(retptr, ctypes.c_void_p)
 
-def one_score_to_py(score, n):
+def one_score_to_py(score, cands, q, n):
     ret = {}
     ret['distance'] = []
     ret['mask'] = []
@@ -110,27 +109,19 @@ def one_score_to_py(score, n):
     ret['total_matched'] = score.total_matched[n]
     ret['score'] = score.scores[n]
 
-    th_done = False
-    spec_done = False
-    for i in range(score.npeaks):
-        if (not th_done) and score.theoretical[n * score.npeaks * 2 + i * 2] == 0:
-            th_done = True
-        if not th_done:
+    for i in range(len(cands[n]['spec'][i])):
+        if cands[n]['spec'][i][0] != 0:
             ret['distance'].append(score.distances[n * score.npeaks + i])
-            ret['mask'].append(score.mask[n * score.npeaks + i])
-            ret['theoretical'].append([score.theoretical[n * score.npeaks * 2 + i * 2], score.theoretical[n * score.npeaks * 2 + i * 2 + 1]])
-        if (not spec_done) and score.spec[n * score.npeaks * 2 + i * 2] == 0:
-            spec_done = True
-        if not spec_done:
-            #signal.signal(signal.SIGSEGV, make_sig_handler([score.npeaks, i, n, n * score.npeaks * 2 + i * 2, spec_done, score.spec[n * score.npeaks * 2 + i * 2]]))
-            ret['spec'].append([score.spec[n * score.npeaks * 2 + i * 2], score.spec[n * score.npeaks * 2 + i * 2 + 1]])
+            ret['mask'].append(ord(score.mask[n * score.npeaks + i]))
         if spec_done and th_done:
             break
+    ret['spec'] = cands[n]['spec']
+    ret['theoretical'] = q['spec']
     return ret
 
-def nth_score(score, n):
+def nth_score(score, cands, q, n):
     ret = {}
-    ret_data = one_score_to_py(score, n)
+    ret_data = one_score_to_py(score, cands, q, n)
     ret['data'] = ret_data
     ret['score'] = ret_data['score']
     return ret
@@ -139,7 +130,7 @@ def score_to_py(scoreptr, q, cands, n_scores):
     score = scoreptr[0]
     ret = []
     for i in range(n_scores):
-        s = nth_score(score, i)
+        s = nth_score(score, cands, q, i)
         s['title'] = q['title']
         s['desc'] = cands[i]['desc']
         s['score'] = s['score']
@@ -167,13 +158,6 @@ def cands_to_c(cands):
         ret[i].length = min(len(cands[i]['seq']), 127)
     return ctypes.cast(ret, ctypes.c_void_p)
 
-def make_sig_handler(data):
-    def sig_handler(_1, _2):
-        import sys
-        sys.stderr.write("GOT SIGSEGV: {}\n".format(data))
-        raise ValueError("SIGSEGV")
-    return sig_handler
-
 def rnhs(q, cands, tol):
     qptr = query_to_c(q)
     ccands = cands_to_c(cands)
@@ -185,9 +169,6 @@ def rnhs(q, cands, tol):
     data.elt_size = ctypes.sizeof(Db)
     data.cands = ccands
     ret = lib.rnhs(data)
-    import sys
-    if ret[0].ncands != len(cands):
-        sys.stderr.write("WTF? {} vs {}!!\n".format(ret[0].ncands, len(cands)))
     out = score_to_py(ret, q, cands, ret[0].ncands)
     lib.free_score(ret)
     return out

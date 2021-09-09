@@ -25,7 +25,7 @@ def write_output():
     n_queries = queries.count_queries()
 
     cur = blackboard.CONN.cursor()
-    blackboard.execute(cur, "SELECT {} FROM results as r1 WHERE r1.rowid IN (SELECT r2.rowid FROM results AS r2 WHERE r1.title = r2.title ORDER BY r2.score DESC LIMIT ?);".format(",".join(blackboard.RES_COLS)), (n_cands,))
+    blackboard.execute(cur, "SELECT {} FROM results as r1 WHERE r1.rowid IN (SELECT r2.rowid FROM results AS r2 WHERE r1.title = r2.title ORDER BY r2.score DESC LIMIT ?) ORDER BY title DESC, score DESC;".format(",".join(blackboard.RES_COLS)), (n_cands,))
 
     data_idx = blackboard.RES_COLS.index("data")
     progress = tqdm.tqdm(desc='Output Top Results', total=n_queries * n_cands)

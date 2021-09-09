@@ -3,6 +3,7 @@ import sys
 import tqdm
 import numpy
 import pickle
+import glob
 
 import blackboard
 
@@ -210,8 +211,10 @@ def run():
                                     ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else ""))
         log.info("Preparing Input Databases...")
         if blackboard.config['pipeline'].getboolean('db processing'):
-            if os.path.exists(blackboard.DB_PATH):
-                os.remove(blackboard.DB_PATH)
+            db_paths = [blackboard.DB_PATH + ".sqlite", blackboard.DB_PATH + "_q.sqlite", blackboard.DB_PATH + "_cands.sqlite"]
+            for p in db_paths:
+                if os.path.exists(p):
+                    os.remove(p)
         blackboard.prepare_connection()
         queries.prepare_db()
         if blackboard.config['pipeline'].getboolean('db processing'):
@@ -308,7 +311,6 @@ def run():
     finally:
         log.info("Cleaning up...")
         if len(blackboard.config['data']['tmpdir']) > 0:
-            import glob
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepidtmp*")))
             # Note: final db not removed for future reuse

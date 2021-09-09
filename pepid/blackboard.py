@@ -43,7 +43,7 @@ def init_results_db(generate=False, base_dir=None):
 
     if generate:
         unique = str(uuid.uuid4())
-        RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_{}_pepidpart.sqlite".format(unique)
+        RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1] + "_{}_pepidpart.sqlite".format(unique)
         RES_DB_PATH = os.path.join(base_dir, RES_DB_FNAME)
 
     RES_CONN = None
@@ -68,8 +68,12 @@ def init_results_db(generate=False, base_dir=None):
             continue
 
     cur = RES_CONN.cursor()
-    execute(cur, "DROP TABLE IF EXISTS results;")
-    execute(cur, create_table_str("results", RES_COLS, [t if i != RES_COLS.index("score") else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
+    import sys
+    sys.stderr.write("DROPPING RESULTS...\n")
+    if os.path.exists(DB_PATH + ".sqlite"):
+        os.remove(DB_PATH + ".sqlite")
+    sys.stderr.write("DROPPED RESULTS!!\n")
+    execute(cur, create_table_str("main.results", RES_COLS, [t if i != RES_COLS.index("score") else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
     RES_CONN.commit()
 
 def setup_constants():
@@ -94,15 +98,15 @@ def setup_constants():
     QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
     QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "BLOB", "REAL", "REAL", "BLOB"]
 
-    DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + ".sqlite"
+    DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
     RES_DB_FNAME = DB_FNAME
     DB_PATH = os.path.join(config['data']['tmpdir'], DB_FNAME)
-    RES_DB_PATH = DB_PATH
+    RES_DB_PATH = DB_PATH + ".sqlite"
 
     if not config['pipeline'].getboolean('db processing'):
         if config['data'].getboolean('preprocessed database', fallback=True):
             DB_PATH = config['data']['preprocessed database']
-            RES_DB_PATH = DB_PATH
+            RES_DB_PATH = DB_PATH + ".sqlite"
             DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['preprocessed database'].split('/')))[-1]
             RES_DB_FNAME = DB_FNAME
 
@@ -113,7 +117,8 @@ def prepare_connection():
     _CONN = None
     while CONN is None:
         try:
-            _CONN = sqlite3.connect("file:" + DB_PATH + "?cache=shared", detect_types=1, uri=True, timeout=0.1)
+            import sys
+            _CONN = sqlite3.connect("file:" + DB_PATH + ".sqlite?cache=shared", detect_types=1, uri=True, timeout=0.1)
             cur = _CONN.cursor()
             #cur.execute("PRAGMA threads=4;")
             cur.execute("PRAGMA synchronous=OFF;")
@@ -123,7 +128,12 @@ def prepare_connection():
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             cur.execute("PRAGMA journal_mode=WAL;")
+
+            cur.execute("ATTACH DATABASE ? AS c;", (DB_PATH + "_cands.sqlite",))
+            cur.execute("ATTACH DATABASE ? AS q;", (DB_PATH + "_q.sqlite",))
+
             CONN = _CONN
+
         except:
             if _CONN is not None:
                 _CONN.close()

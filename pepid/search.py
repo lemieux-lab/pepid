@@ -313,11 +313,8 @@ def search_core(start, end):
                 if len(cands) == 0:
                     break
                 res = scoring_fn(cands, q)
-                #res = [{'title': q['title'], 'desc': cands[_]['desc'], 'seq': cands[_]['seq'], 'modseq': cands[_]['seq'], 'score': 1.0} for _ in range(len(cands))]
                 for r in res:
-                    #r['spec'] = None
                     r['data'] = copy.deepcopy(r)
-                #out_data = [tuple([(row[k] if k != 'data' else pickle.dumps(row[k])) for k in blackboard.RES_COLS]) for row in res]
                 out_data = []
                 for row in res:
                     out_data.append([])
