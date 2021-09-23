@@ -43,7 +43,7 @@ def init_results_db(generate=False, base_dir=None):
 
     if generate:
         unique = str(uuid.uuid4())
-        RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1] + "_{}_pepidpart.sqlite".format(unique)
+        RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_{}_pepidpart.sqlite".format(unique)
         RES_DB_PATH = os.path.join(base_dir, RES_DB_FNAME)
 
     RES_CONN = None
@@ -53,12 +53,12 @@ def init_results_db(generate=False, base_dir=None):
             _CONN = sqlite3.connect("file:" + RES_DB_PATH + "?cache=shared", detect_types=1, uri=True, timeout=0.1)
             cur = _CONN.cursor()
             cur.execute("PRAGMA synchronous=OFF;")
-            #cur.execute("PRAGMA mmap_size=8589934592;") # 8GB
+            #cur.execute("PRAGMA mmap_size=8589934560;") # 8GB/48 threads
             #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
             #cur.execute("PRAGMA cache_size=100;")
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
-            cur.execute("PRAGMA journal_mode=WAL;")
+            #cur.execute("PRAGMA journal_mode=WAL;")
             RES_CONN = _CONN
         except:
             if _CONN is not None:
@@ -68,12 +68,7 @@ def init_results_db(generate=False, base_dir=None):
             continue
 
     cur = RES_CONN.cursor()
-    import sys
-    sys.stderr.write("DROPPING RESULTS...\n")
-    if os.path.exists(DB_PATH + ".sqlite"):
-        os.remove(DB_PATH + ".sqlite")
-    sys.stderr.write("DROPPED RESULTS!!\n")
-    execute(cur, create_table_str("main.results", RES_COLS, [t if i != RES_COLS.index("score") else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
+    execute(cur, create_table_str("main.results", RES_COLS, [t if ((i != RES_COLS.index("score")) or (not generate)) else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
     RES_CONN.commit()
 
 def setup_constants():
@@ -122,12 +117,13 @@ def prepare_connection():
             cur = _CONN.cursor()
             #cur.execute("PRAGMA threads=4;")
             cur.execute("PRAGMA synchronous=OFF;")
+            #cur.execute("PRAGMA mmap_size=8589934560;") # 8GB/48 threads
             #cur.execute("PRAGMA mmap_size=8589934592;") # 8GB
             #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
             #cur.execute("PRAGMA cache_size=100;")
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
-            cur.execute("PRAGMA journal_mode=WAL;")
+            #cur.execute("PRAGMA journal_mode=WAL;")
 
             cur.execute("ATTACH DATABASE ? AS c;", (DB_PATH + "_cands.sqlite",))
             cur.execute("ATTACH DATABASE ? AS q;", (DB_PATH + "_q.sqlite",))

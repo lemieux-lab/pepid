@@ -210,11 +210,14 @@ def run():
                                     ("Search | " if blackboard.config['pipeline'].getboolean('search') else "") +
                                     ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else ""))
         log.info("Preparing Input Databases...")
+        db_paths = [blackboard.DB_PATH + "_q.sqlite"]
         if blackboard.config['pipeline'].getboolean('db processing'):
-            db_paths = [blackboard.DB_PATH + ".sqlite", blackboard.DB_PATH + "_q.sqlite", blackboard.DB_PATH + "_cands.sqlite"]
-            for p in db_paths:
-                if os.path.exists(p):
-                    os.remove(p)
+            db_paths.append(blackboard.DB_PATH + "_cands.sqlite")
+        if blackboard.config['pipeline'].getboolean('search'):
+            db_paths.append(blackboard.DB_PATH + ".sqlite")
+        for p in db_paths:
+            if os.path.exists(p):
+                os.remove(p)
         blackboard.prepare_connection()
         queries.prepare_db()
         if blackboard.config['pipeline'].getboolean('db processing'):
@@ -274,7 +277,7 @@ def run():
             handle_nodes("Input Postprocessing", qspec + dbspec)
 
         cur = blackboard.CONN.cursor()
-        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS cand_mass_idx ON candidates (mass ASC);")
+        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
         del cur
 
         if blackboard.config['pipeline'].getboolean('search'):

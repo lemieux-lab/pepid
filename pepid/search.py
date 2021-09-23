@@ -325,8 +325,6 @@ def search_core(start, end):
                             out_data[-1].append(row[k])
                     out_data[-1] = tuple(out_data[-1])
                 blackboard.executemany(res_cur, blackboard.maybe_insert_str("results", blackboard.RES_COLS), out_data)
-                #import sys
-                #sys.stderr.write("[{}] {} resulted in {} updates!\n".format(blackboard.RES_DB_PATH, blackboard.insert_all_str("results", blackboard.RES_COLS), res_cur.rowcount))
                 blackboard.RES_CONN.commit()
 
 def prepare_search():

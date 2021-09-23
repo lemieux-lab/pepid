@@ -109,14 +109,12 @@ def one_score_to_py(score, cands, q, n):
     ret['total_matched'] = score.total_matched[n]
     ret['score'] = score.scores[n]
 
-    for i in range(len(cands[n]['spec'][i])):
-        if cands[n]['spec'][i][0] != 0:
+    for i in range(len(cands[n]['spec'])):
+        if cands[n]['spec'][i] != 0:
             ret['distance'].append(score.distances[n * score.npeaks + i])
             ret['mask'].append(ord(score.mask[n * score.npeaks + i]))
-        if spec_done and th_done:
-            break
-    ret['spec'] = cands[n]['spec']
-    ret['theoretical'] = q['spec']
+    ret['spec'] = q['spec']
+    ret['theoretical'] = cands[n]['spec']
     return ret
 
 def nth_score(score, cands, q, n):
