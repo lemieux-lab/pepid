@@ -83,15 +83,16 @@ def query_to_c(q):
     ret = Query()
     retptr = ctypes.pointer(ret)
 
+    spec = q['spec'].data
+
     ret.title = q['title'].encode('ascii')
     ret.rt = q['rt']
     ret.charge = q['charge']
     ret.mass = q['mass']
-    ret.npeaks = min(len(q['spec']), blackboard.config['search'].getint('max peaks'))
+    ret.npeaks = min(len(spec), blackboard.config['search'].getint('max peaks'))
     ret.min_mass = q['min_mass']
     ret.max_mass = q['max_mass']
     #ret.meta = repr(q['meta']).encode('ascii')
-    spec = q['spec']
 
     for i in range(min(len(spec), blackboard.config['search'].getint('max peaks'))):
         ret.spec[i][0] = spec[i][0]
@@ -109,8 +110,8 @@ def one_score_to_py(score, cands, q, n):
     ret['total_matched'] = score.total_matched[n]
     ret['score'] = score.scores[n]
 
-    for i in range(len(cands[n]['spec'])):
-        if cands[n]['spec'][i] != 0:
+    for i in range(len(cands[n]['spec'].data)):
+        if cands[n]['spec'].data[i] != 0:
             ret['distance'].append(score.distances[n * score.npeaks + i])
             ret['mask'].append(ord(score.mask[n * score.npeaks + i]))
     ret['spec'] = q['spec']
@@ -133,7 +134,7 @@ def score_to_py(scoreptr, q, cands, n_scores):
         s['desc'] = cands[i]['desc']
         s['score'] = s['score']
         s['seq'] = cands[i]['seq']
-        s['modseq'] = "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'])])
+        s['modseq'] = "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'].data)])
         ret.append(s)
     return ret
 
@@ -146,13 +147,13 @@ def cands_to_c(cands):
                 setattr(ret[i], k, cands[i][k])
         ret[i].desc = cands[i]['desc'][:1023].encode('ascii')
         ret[i].seq = cands[i]['seq'][:127].encode('ascii')
-        spec = cands[i]['spec']
+        spec = cands[i]['spec'].data
         for j in range(min(len(spec), blackboard.config['search'].getint('max peaks'))):
             ret[i].spec[j][0] = spec[j]
             ret[i].spec[j][1] = 0
-        for j in range(min(len(cands[i]['mods']), 127)):
-            ret[i].mods[j] = cands[i]['mods'][j]
-        ret[i].npeaks = min(len(cands[i]['spec']), blackboard.config['search'].getint('max peaks'))
+        for j in range(min(len(cands[i]['mods'].data), 127)):
+            ret[i].mods[j] = cands[i]['mods'].data[j]
+        ret[i].npeaks = min(len(cands[i]['spec'].data), blackboard.config['search'].getint('max peaks'))
         ret[i].length = min(len(cands[i]['seq']), 127)
     return ctypes.cast(ret, ctypes.c_void_p)
 

@@ -8,7 +8,6 @@ import os
 import re
 import helper
 import functools
-import pickle
 import copy
 
 def crnhs(cands, query):
@@ -293,38 +292,22 @@ def search_core(start, end):
     res_cur = blackboard.RES_CONN.cursor()
 
     blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
-    queries = [{k:(v if k not in ('spec', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.QUERY_COLS, data)} for data in cur.fetchall()]
+    queries = cur.fetchall()
 
     for iq, q in enumerate(queries):
         if(q['mass'] > 0):
             blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
             
             while True:
-                #cands = [{k:(v if k not in ('spec', 'mods', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, res)} for res in cur.fetchmany(batch_size)]
-                cands = []
-                for res in cur.fetchmany(batch_size):
-                    cand = {}
-                    for k, v in zip(blackboard.DB_COLS, res):
-                        if k not in ('spec', 'mods', 'meta'):
-                            cand[k] = v
-                        else:
-                            cand[k] = pickle.loads(v)
-                    cands.append(cand)        
+                cands = cur.fetchmany(batch_size)
                 if len(cands) == 0:
                     break
                 res = scoring_fn(cands, q)
                 for r in res:
-                    r['data'] = copy.deepcopy(r)
-                out_data = []
-                for row in res:
-                    out_data.append([])
-                    for k in blackboard.RES_COLS:
-                        if k == 'data':
-                            out_data[-1].append(pickle.dumps(row[k]))
-                        else:
-                            out_data[-1].append(row[k])
-                    out_data[-1] = tuple(out_data[-1])
-                blackboard.executemany(res_cur, blackboard.maybe_insert_str("results", blackboard.RES_COLS), out_data)
+                    #r['data'] = blackboard.Meta(copy.copy(r))
+                    # XXX TODO Need to do a copy somehow?? This is a major bottleneck during search though.
+                    r['data'] = blackboard.Meta(r)
+                blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), res)
                 blackboard.RES_CONN.commit()
 
 def prepare_search():

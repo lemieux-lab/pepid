@@ -10,7 +10,6 @@ import os
 import random
 import copy
 import helper
-import pickle
 
 class DbSettings():
     def __init__(self):
@@ -83,7 +82,7 @@ def identipy_theoretical_spectrum(cands, n):
 
     for i in range(len(cands)):
         seq = cands[i]['sequence']
-        mod = cands[i]['mods']
+        mod = cands[i]['mods'].data
         th_masses = pepid_utils.identipy_theor_spectrum(seq, mod, nterm, cterm)
         ret.append(th_masses)
 
@@ -102,7 +101,7 @@ def theoretical_spectrum(cands):
 
     for i in range(len(cands)):
         seq = cands[i]['seq']
-        mod = cands[i]['mods']
+        mod = cands[i]['mods'].data
         th_masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm)
         ret.append(th_masses.tolist())
 
@@ -135,14 +134,12 @@ def user_processing(start, end):
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
 
-    ret = cur.fetchall()
-    data = [{k:(v if k not in ('spec', 'mods', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.DB_COLS, results)} for results in ret]
-
+    data = cur.fetchall()
     rts = rt_fn(data)
     specs = spec_fn(data)
     max_peaks = blackboard.config['search'].getint('max peaks')
 
-    specs = [pickle.dumps(spec[:min(len(spec), max_peaks)]) for spec in specs]
+    specs = [blackboard.Spectrum(spec[:min(len(spec), max_peaks)]) for spec in specs]
     rowids = list(range(start+1, end+1))
 
     blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
@@ -202,7 +199,7 @@ def process_entry(description, buff, settings):
                 for var in var_set:
                     mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                     if settings.min_mass <= mass <= settings.max_mass:
-                        data.append({"desc": description, "seq": peps[j], "mods": var, "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": None})
+                        data.append({"desc": description, "seq": peps[j], "mods": blackboard.Meta(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
     return data
 
 def fill_db(start, end):
@@ -243,20 +240,8 @@ def fill_db(start, end):
         data.extend(peps)
 
     cur = blackboard.CONN.cursor()
-    #ipt_data = [tuple([((row[k] if k not in ('spec', 'mods', 'meta') else pickle.dumps(row[k])) if k != 'meta' else pickle.dumps(None)) for k in blackboard.DB_COLS]) for row in data]
-    ipt_data = []
-    for row in data:
-        ipt_data.append([])
-        for k in blackboard.DB_COLS:
-            if k == 'meta':
-                ipt_data[-1].append(pickle.dumps(None))
-            elif k in ('spec', 'mods'):
-                ipt_data[-1].append(pickle.dumps(row[k]))
-            else:
-                ipt_data[-1].append(row[k])
-        ipt_data[-1] = tuple(ipt_data[-1])
-        
-    blackboard.executemany(cur, blackboard.insert_all_str("candidates", blackboard.DB_COLS), ipt_data)
+
+    blackboard.executemany(cur, blackboard.insert_dict_str("candidates", blackboard.DB_COLS), data)
     cur.close()
     blackboard.commit()
 

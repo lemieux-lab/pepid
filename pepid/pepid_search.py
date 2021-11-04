@@ -207,13 +207,14 @@ def run():
     try:
         log.info("Phases to run: | " + ("DB Processing | " if blackboard.config['pipeline'].getboolean('db processing') else "") +
                                     ("Postprocessing | " if blackboard.config['pipeline'].getboolean('postprocessing') else "") +
-                                    ("Search | " if blackboard.config['pipeline'].getboolean('search') else "") +
-                                    ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else ""))
+                                    ("Score | " if blackboard.config['pipeline'].getboolean('score') else "") +
+                                    ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else "") +
+                                    ("Output CSV | " if blackboard.config['pipeline'].getboolean('output csv') else ""))
         log.info("Preparing Input Databases...")
         db_paths = [blackboard.DB_PATH + "_q.sqlite"]
         if blackboard.config['pipeline'].getboolean('db processing'):
             db_paths.append(blackboard.DB_PATH + "_cands.sqlite")
-        if blackboard.config['pipeline'].getboolean('search'):
+        if blackboard.config['pipeline'].getboolean('score'):
             db_paths.append(blackboard.DB_PATH + ".sqlite")
         for p in db_paths:
             if os.path.exists(p):
@@ -224,43 +225,45 @@ def run():
             db.prepare_db()
         blackboard.init_results_db()
 
-        log.info("Preparing Input Processing Nodes...")
+        if blackboard.config['pipeline'].getboolean('score'):
+            log.info("Preparing Input Processing Nodes...")
+            
+            qnodes = blackboard.config['performance'].getint('query nodes')
+            dbnodes = blackboard.config['performance'].getint('db nodes')
+            snodes = blackboard.config['performance'].getint('search nodes')
+
+            if qnodes < 0 or dbnodes < 0 or snodes < 0:
+                log.fatal("node settings are query={}, db={}, search={}, but only values 0 or above allowed.".format(qnodes, dbnodes, snodes))
+                sys.exit(2)
+
+            batch_size = blackboard.config['performance'].getint('batch size')
+            n_db = db.count_db()
+            n_queries = queries.count_queries()
+            n_db_batches = math.ceil(n_db / batch_size)
+            n_query_batches = math.ceil(n_queries / batch_size)
         
-        qnodes = blackboard.config['performance'].getint('query nodes')
-        dbnodes = blackboard.config['performance'].getint('db nodes')
-        snodes = blackboard.config['performance'].getint('search nodes')
+            base_path = blackboard.TMP_PATH
+            qspec = [("queries_node.py", qnodes, n_query_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
+                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
+            dbspec = [("db_node.py", dbnodes, n_db_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
 
-        if qnodes < 0 or dbnodes < 0 or snodes < 0:
-            log.fatal("node settings are query={}, db={}, search={}, but only values 0 or above allowed.".format(qnodes, dbnodes, snodes))
-            sys.exit(2)
-
-        batch_size = blackboard.config['performance'].getint('batch size')
-        n_db = db.count_db()
-        n_queries = queries.count_queries()
-        n_db_batches = math.ceil(n_db / batch_size)
-        n_query_batches = math.ceil(n_queries / batch_size)
-    
-        base_path = blackboard.TMP_PATH
-        qspec = [("queries_node.py", qnodes, n_query_batches,
-                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
-                        [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
-                        [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
-        dbspec = [("db_node.py", dbnodes, n_db_batches,
-                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                        [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
-                        [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
-
-        handle_nodes("Input Processing", (qspec + dbspec) if blackboard.config['pipeline'].getboolean('db processing') else qspec)
-        idx = 0
-
-        qnodes = blackboard.config['performance'].getint('post query nodes')
-        dbnodes = blackboard.config['performance'].getint('post db nodes')
-
-        batch_start = 0
-        n_db = db.count_peps()
-        n_db_batches = math.ceil(n_db / batch_size)
+            handle_nodes("Input Processing", (qspec + dbspec) if blackboard.config['pipeline'].getboolean('db processing') else qspec)
 
         if blackboard.config['pipeline'].getboolean('postprocessing'):
+            idx = 0
+
+            qnodes = blackboard.config['performance'].getint('post query nodes')
+            dbnodes = blackboard.config['performance'].getint('post db nodes')
+
+            batch_start = 0
+            n_db = db.count_peps()
+            n_db_batches = math.ceil(n_db / batch_size)
+
             if qnodes < 0 or dbnodes < 0:
                 log.fatal("post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
                 sys.exit(2)
@@ -280,7 +283,7 @@ def run():
         blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
         del cur
 
-        if blackboard.config['pipeline'].getboolean('search'):
+        if blackboard.config['pipeline'].getboolean('score'):
             n_search_batches = math.ceil(n_queries / batch_size)
             sspec = [("search_node.py", snodes, n_search_batches,
                             [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
@@ -296,20 +299,22 @@ def run():
             files = glob.glob(fname_path)
 
             cur = blackboard.CONN.cursor()
+            blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (title ASC, score DESC);")
             for f in tqdm.tqdm(files, total=len(files), desc="Merging Results"):
                 blackboard.execute(cur, "ATTACH DATABASE ? AS results_part;", (f,))
                 blackboard.execute(cur, "INSERT OR IGNORE INTO results SELECT * FROM results_part.results;")
                 blackboard.commit()
                 blackboard.execute(cur, "DETACH DATABASE results_part;")
                 os.remove(f)
-            blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (title ASC, score DESC);")
             del cur
 
         if blackboard.config['pipeline'].getboolean('postprocess search'):
             log.info("Search complete. Post-processing results...")
             processing.post_process()
-        log.info("Done. Saving results to {}.".format(blackboard.config['data']['output']))
-        pepid_io.write_output()
+        log.info("Done.")
+        if blackboard.config['pipeline'].getboolean('output csv'):
+            log.info("Saving results to {}.".format(blackboard.config['data']['output']))
+            pepid_io.write_output()
 
     finally:
         log.info("Cleaning up...")

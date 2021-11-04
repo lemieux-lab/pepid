@@ -6,7 +6,6 @@ import pepid_utils
 import time
 import random
 import os
-import pickle
 
 def count_queries():
     """
@@ -62,17 +61,17 @@ def fill_queries(start, end):
                 data[-1]['rt'] = rt
                 data[-1]['charge'] = charge
                 data[-1]['mass'] = precmass
-                data[-1]['spec'] = list(zip(mz_arr, intens_arr))
+                data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
                 data[-1]['min_mass'] = precmass + delta_l
                 data[-1]['max_mass'] = precmass + delta_r
-                data[-1]['meta'] = None
+                data[-1]['meta'] = blackboard.Meta(None)
                 
             elif '0' <= l[0] <= '9':
                 mz, intens = l.split(maxsplit=1)
                 mz_arr.append(float(mz))
                 intens_arr.append(float(intens))
     cur = blackboard.CONN.cursor()
-    blackboard.executemany(cur, blackboard.insert_all_str("queries", blackboard.QUERY_COLS), [tuple([(row[k] if k not in ('meta', 'spec') else pickle.dumps(row[k])) for k in blackboard.QUERY_COLS]) for row in data])
+    blackboard.executemany(cur, blackboard.insert_dict_str("queries", blackboard.QUERY_COLS), data)
     cur.close()
     blackboard.commit()
 
@@ -109,13 +108,9 @@ def user_processing(start, end):
 
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS + ["rowid"], "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
-    rowids = []
-    data = []
-    for datum in cur.fetchall():
-        data.append({k:(v if k not in ('spec', 'meta') else pickle.loads(v)) for k, v in zip(blackboard.QUERY_COLS, datum[:-1])})
-        rowids.append(datum[-1])
+    data = cur.fetchall()
     meta = metadata_fn(data[:end-start])
-    blackboard.executemany(cur, "UPDATE queries SET meta = ? WHERE rowid = ?;", [(pickle.dumps(meta[i]), rowids[i]) for i in range(len(meta))])
+    blackboard.executemany(cur, "UPDATE queries SET meta = ? WHERE rowid = ?;", zip(map(blackboard.Meta, meta), map(lambda x: x['rowid'], data)))
     cur.close()
 
 def prepare_db():

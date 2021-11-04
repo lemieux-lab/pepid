@@ -3,6 +3,7 @@ import os
 import sqlite3
 import time
 import uuid
+import pickle
 
 CONN = None
 RES_CONN = None
@@ -21,14 +22,28 @@ KEY_DATA_DTYPE = None
 LOCK = None
 TMP_PATH = None
 
+class Spectrum(object):
+    def __init__(self, x):
+        self.data = x
+
+class Meta(object):
+    def __init__(self, x):
+        self.data = x
+
 def create_table_str(table_name, table_cols, table_types, extra=[]):
-    return "CREATE TABLE {} ({});".format(table_name, ",".join(list(map(lambda x: "{} {}".format(x[0], x[1]), zip(table_cols, table_types))) + extra))
+    return "CREATE TABLE IF NOT EXISTS {} ({});".format(table_name, ",".join(list(map(lambda x: "{} {}".format(x[0], x[1]), zip(table_cols, table_types))) + extra))
 
 def insert_all_str(table_name, table_cols):
     return "INSERT INTO {} ({}) VALUES ({});".format(table_name, ",".join(table_cols), ",".join(["?"]*len(table_cols)))
 
+def insert_dict_str(table_name, table_cols):
+    return "INSERT INTO {} ({}) VALUES ({});".format(table_name, ",".join(table_cols), ",".join([":" + x for x in table_cols]))
+
 def maybe_insert_str(table_name, table_cols):
     return "INSERT OR IGNORE INTO {} ({}) VALUES ({});".format(table_name, ",".join(table_cols), ",".join(["?"]*len(table_cols)))
+
+def maybe_insert_dict_str(table_name, table_cols):
+    return "INSERT OR IGNORE INTO {} ({}) VALUES ({});".format(table_name, ",".join(table_cols), ",".join([":" + x for x in table_cols]))
 
 def select_str(table_name, table_cols, extra=""):
     return "SELECT {} FROM {} {};".format(",".join(table_cols), table_name, extra)
@@ -67,6 +82,7 @@ def init_results_db(generate=False, base_dir=None):
             time.sleep(0.1)
             continue
 
+    RES_CONN.row_factory = sqlite3.Row
     cur = RES_CONN.cursor()
     execute(cur, create_table_str("main.results", RES_COLS, [t if ((i != RES_COLS.index("score")) or (not generate)) else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
     RES_CONN.commit()
@@ -85,13 +101,18 @@ def setup_constants():
     global RES_DB_PATH
 
     RES_COLS = ["title", "desc", "seq", "modseq", "score", "data"]
-    RES_TYPES = ["TEXT", "TEXT", "TEXT", "TEXT", "REAL", "BLOB"]
+    RES_TYPES = ["TEXT", "TEXT", "TEXT", "TEXT", "REAL", "META"]
 
     DB_COLS = ["desc", "seq", "mods", "rt", "length", "mass", "spec", "meta"]
-    DB_TYPES = ["TEXT", "TEXT", "BLOB", "REAL", "INTEGER", "REAL", "BLOB", "BLOB"]
+    DB_TYPES = ["TEXT", "TEXT", "META", "REAL", "INTEGER", "REAL", "SPECTRUM", "META"]
 
     QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
-    QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "BLOB", "REAL", "REAL", "BLOB"]
+    QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL", "META"]
+
+    sqlite3.register_adapter(Spectrum, lambda x: pickle.dumps(x.data))
+    sqlite3.register_adapter(Meta, lambda x: pickle.dumps(x.data))
+    sqlite3.register_converter("spectrum", lambda x: Spectrum(pickle.loads(x)))
+    sqlite3.register_converter("meta", lambda x: Meta(pickle.loads(x)))
 
     DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
     RES_DB_FNAME = DB_FNAME
@@ -129,6 +150,7 @@ def prepare_connection():
             cur.execute("ATTACH DATABASE ? AS q;", (DB_PATH + "_q.sqlite",))
 
             CONN = _CONN
+            CONN.row_factory = sqlite3.Row
 
         except:
             if _CONN is not None:
