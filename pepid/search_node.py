@@ -24,7 +24,7 @@ class SearchNode(node.Node):
         lgt = struct.unpack("!I", msg[:4])[0]
         blackboard.TMP_PATH = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
         self.path = blackboard.TMP_PATH
-        blackboard.init_results_db(True, base_dir=blackboard.TMP_PATH)
+        blackboard.init_results_db(True, base_dir=blackboard.config['data']['tmpdir'])
         blackboard.prepare_connection()
 
 if __name__ == '__main__':

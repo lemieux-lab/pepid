@@ -8,9 +8,9 @@ import pickle
 CONN = None
 RES_CONN = None
 config = configparser.ConfigParser(inline_comment_prefixes="#")
-DB_TYPE = None
-RES_TYPE = None
-QUERY_TYPE = None
+DB_TYPES = None
+RES_TYPES = None
+QUERY_TYPES = None
 DB_COLS = None
 RES_COLS = None
 QUERY_COLS = None
@@ -70,7 +70,7 @@ def init_results_db(generate=False, base_dir=None):
             cur.execute("PRAGMA synchronous=OFF;")
             #cur.execute("PRAGMA mmap_size=8589934560;") # 8GB/48 threads
             #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
-            #cur.execute("PRAGMA cache_size=100;")
+            cur.execute("PRAGMA cache_size=-1048576;") # negative value = multiples of page matching 1024 * -value as closely as possible
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             #cur.execute("PRAGMA journal_mode=WAL;")
@@ -100,8 +100,8 @@ def setup_constants():
     global RES_DB_FNAME
     global RES_DB_PATH
 
-    RES_COLS = ["title", "desc", "seq", "modseq", "score", "data"]
-    RES_TYPES = ["TEXT", "TEXT", "TEXT", "TEXT", "REAL", "META"]
+    RES_COLS = ["title", "desc", "seq", "modseq", "score", "data", "candrow", "qrow"]
+    RES_TYPES = ["TEXT", "TEXT", "TEXT", "TEXT", "REAL", "BLOB", "INTEGER", "INTEGER"]
 
     DB_COLS = ["desc", "seq", "mods", "rt", "length", "mass", "spec", "meta"]
     DB_TYPES = ["TEXT", "TEXT", "META", "REAL", "INTEGER", "REAL", "SPECTRUM", "META"]
@@ -142,6 +142,7 @@ def prepare_connection():
             #cur.execute("PRAGMA mmap_size=8589934592;") # 8GB
             #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
             #cur.execute("PRAGMA cache_size=100;")
+            cur.execute("PRAGMA cache_size=-1048576;")
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             #cur.execute("PRAGMA journal_mode=WAL;")
@@ -163,13 +164,14 @@ def prepare_connection():
         RES_CONN = CONN
 
 def execute(cur, *args):
+    import sys
     while True:
         try:
             ret = cur.execute(*args)
-        except:
+            return ret
+        except Exception as e:
             time.sleep(0.1)
             continue
-        return ret
 
 def executemany(cur, *args):
     while True:

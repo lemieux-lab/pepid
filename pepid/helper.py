@@ -132,7 +132,6 @@ def score_to_py(scoreptr, q, cands, n_scores):
         s = nth_score(score, cands, q, i)
         s['title'] = q['title']
         s['desc'] = cands[i]['desc']
-        s['score'] = s['score']
         s['seq'] = cands[i]['seq']
         s['modseq'] = "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'].data)])
         ret.append(s)

@@ -299,13 +299,13 @@ def run():
             files = glob.glob(fname_path)
 
             cur = blackboard.CONN.cursor()
-            blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (title ASC, score DESC);")
-            for f in tqdm.tqdm(files, total=len(files), desc="Merging Results"):
-                blackboard.execute(cur, "ATTACH DATABASE ? AS results_part;", (f,))
-                blackboard.execute(cur, "INSERT OR IGNORE INTO results SELECT * FROM results_part.results;")
-                blackboard.commit()
-                blackboard.execute(cur, "DETACH DATABASE results_part;")
-                os.remove(f)
+            #blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS res_score_idx ON results (score DESC);")
+            #for f in tqdm.tqdm(files, total=len(files), desc="Merging Results"):
+            #    blackboard.execute(cur, "ATTACH DATABASE ? AS results_part;", (f,))
+            #    blackboard.execute(cur, "INSERT OR IGNORE INTO results SELECT * FROM results_part.results;")
+            #    blackboard.execute(cur, "COMMIT;")
+            #    blackboard.execute(cur, "DETACH DATABASE results_part;")
+            #    os.remove(f)
             del cur
 
         if blackboard.config['pipeline'].getboolean('postprocess search'):
@@ -313,8 +313,10 @@ def run():
             processing.post_process()
         log.info("Done.")
         if blackboard.config['pipeline'].getboolean('output csv'):
-            log.info("Saving results to {}.".format(blackboard.config['data']['output']))
+            log.info("Saving results to {}...".format(blackboard.config['data']['output']))
+            #os.system("sqlite3 -header -csv \"{}\" \"SELECT results.rowid, {} FROM results JOIN (SELECT title, IFNULL((SELECT score FROM results WHERE title = titles.title AND score > 0 ORDER BY score DESC LIMIT 1 OFFSET {}), -1) AS cutoff_score FROM (SELECT DISTINCT title FROM results) AS titles) AS cutoffs ON results.title = cutoffs.title AND results.score >= cutoffs.cutoff_score;\" > \"{}\"".format(blackboard.RES_DB_PATH, ",".join(map(lambda x: "results." + x, blackboard.RES_COLS[:-1])), blackboard.config['search'].getint('max retained candidates') - 1, blackboard.config['data']['output']))
             pepid_io.write_output()
+            log.info("Saving results done.")
 
     finally:
         log.info("Cleaning up...")

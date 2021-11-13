@@ -8,7 +8,7 @@ import os
 import re
 import helper
 import functools
-import copy
+import pickle
 
 def crnhs(cands, query):
     acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
@@ -291,24 +291,25 @@ def search_core(start, end):
     cur = blackboard.CONN.cursor()
     res_cur = blackboard.RES_CONN.cursor()
 
-    blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+    blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     queries = cur.fetchall()
 
     for iq, q in enumerate(queries):
         if(q['mass'] > 0):
-            blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
+            blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
             
             while True:
                 cands = cur.fetchmany(batch_size)
                 if len(cands) == 0:
                     break
                 res = scoring_fn(cands, q)
-                for r in res:
-                    #r['data'] = blackboard.Meta(copy.copy(r))
-                    # XXX TODO Need to do a copy somehow?? This is a major bottleneck during search though.
-                    r['data'] = blackboard.Meta(r)
+                for i, r in enumerate(res):
+                    r['data'] = b'\0'
+                    r['candrow'] = cands[i]['rowid']
+                    r['qrow'] = q['rowid']
                 blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), res)
-                blackboard.RES_CONN.commit()
+    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_title_idx ON results (title ASC, score DESC);")
+    blackboard.RES_CONN.commit()
 
 def prepare_search():
     """
