@@ -57,15 +57,9 @@ typedef struct {
 } res;
 
 typedef struct {
-    char description[1024];
-    char sequence[128];
-    float mods[128];
-    float rt;
-    uint32_t length;
-    uint32_t npeaks;
-    float mass;
-    char meta[10240];
-    float spec[][2];
+    uint32_t* npeaks;
+    float* spec;
+    char* valid_series;
 } db;
 
 typedef struct {
@@ -75,15 +69,8 @@ typedef struct {
 } predb;
 
 typedef struct {
-    char title[1024];
-    float rt;
-    uint32_t charge;
-    float mass;
     uint32_t npeaks;
-    float min_mass;
-    float max_mass;
-    char meta[10240];
-    float spec[][2];
+    float* spec;
 } query;
 
 typedef struct {
@@ -142,13 +129,9 @@ typedef struct {
 typedef struct {
     double* distances;
     char* mask;
-    double* scores;
-    double* sumI;
-    uint32_t* total_matched;
-    float* theoretical;
-    float* spec;
-    uint32_t ncands;
-    uint32_t npeaks;
+    double score;
+    double sumI;
+    uint32_t total_matched;
 } score_ret;
 
 uint64_t dump(char*, uint64_t, void*, uint64_t, char);
@@ -166,8 +149,9 @@ typedef struct {
     void* cands;
     int n_cands;
     int npeaks;
-    uint64_t elt_size;
+    int n_series;
     float tol;
+    char ppm;
     void* q;
 } score_data;
 
@@ -179,4 +163,4 @@ thread_pool pool;
 //score_ret rnhs(void*, query*, void*, int, int, uint64_t, float);
 score_ret* rnhs(score_data);
 void* alloc(uint64_t);
-char* score_str(score_ret*, int);
+//char* score_str(score_ret*, int);

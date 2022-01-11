@@ -196,8 +196,6 @@ def run():
     Entry point
     """
 
-    blackboard.setup_constants()
-
     import queries
     import db
     import processing
@@ -205,13 +203,16 @@ def run():
     import search
 
     try:
-        log.info("Phases to run: | " + ("DB Processing | " if blackboard.config['pipeline'].getboolean('db processing') else "") +
+        log.info("Phases to run: | " + ("Query Processing | " if blackboard.config['pipeline'].getboolean('query processing') else "") +
+                                    ("DB Processing | " if blackboard.config['pipeline'].getboolean('db processing') else "") +
                                     ("Postprocessing | " if blackboard.config['pipeline'].getboolean('postprocessing') else "") +
                                     ("Score | " if blackboard.config['pipeline'].getboolean('score') else "") +
                                     ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else "") +
                                     ("Output CSV | " if blackboard.config['pipeline'].getboolean('output csv') else ""))
         log.info("Preparing Input Databases...")
-        db_paths = [blackboard.DB_PATH + "_q.sqlite"]
+        db_paths = []
+        if blackboard.config['pipeline'].getboolean('query processing'):
+            db_paths.append(blackboard.DB_PATH + "_q.sqlite")
         if blackboard.config['pipeline'].getboolean('db processing'):
             db_paths.append(blackboard.DB_PATH + "_cands.sqlite")
         if blackboard.config['pipeline'].getboolean('score'):
@@ -220,7 +221,8 @@ def run():
             if os.path.exists(p):
                 os.remove(p)
         blackboard.prepare_connection()
-        queries.prepare_db()
+        if blackboard.config['pipeline'].getboolean('query processing'):
+            queries.prepare_db()
         if blackboard.config['pipeline'].getboolean('db processing'):
             db.prepare_db()
         blackboard.init_results_db()
@@ -237,22 +239,32 @@ def run():
                 sys.exit(2)
 
             batch_size = blackboard.config['performance'].getint('batch size')
-            n_db = db.count_db()
-            n_queries = queries.count_queries()
-            n_db_batches = math.ceil(n_db / batch_size)
-            n_query_batches = math.ceil(n_queries / batch_size)
-        
             base_path = blackboard.TMP_PATH
-            qspec = [("queries_node.py", qnodes, n_query_batches,
-                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
-                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
-                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
-            dbspec = [("db_node.py", dbnodes, n_db_batches,
-                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
-                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
 
-            handle_nodes("Input Processing", (qspec + dbspec) if blackboard.config['pipeline'].getboolean('db processing') else qspec)
+            proc_spec = []
+
+            if blackboard.config['pipeline'].getboolean('db processing'):
+                n_db = db.count_db()
+                n_db_batches = math.ceil(n_db / batch_size)
+                dbspec = [("db_node.py", dbnodes, n_db_batches,
+                                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
+                                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
+                proc_spec = proc_spec + dbspec
+
+            if blackboard.config['pipeline'].getboolean('query processing'):
+                n_queries = queries.count_queries()
+                n_query_batches = math.ceil(n_queries / batch_size)
+        
+                qspec = [("queries_node.py", qnodes, n_query_batches,
+                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
+                                [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
+                                [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])] 
+
+                proc_spec = proc_spec + qspec
+
+            if len(proc_spec) != 0:
+                handle_nodes("Input Processing", proc_spec)
 
         if blackboard.config['pipeline'].getboolean('postprocessing'):
             idx = 0
@@ -320,14 +332,14 @@ def run():
 
     finally:
         log.info("Cleaning up...")
-        if len(blackboard.config['data']['tmpdir']) > 0:
+        if len(blackboard.TMP_PATH) > 0:
             os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepidtmp*")))
+            #os.system("rm -rf {}".format(os.path.join(blackboard.TMP_PATH, "pepidtmp*")))
             # Note: final db not removed for future reuse
 
             if blackboard.LOCK is not None:
                 blackboard.LOCK.close()
-                os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], ".lock")))
+                os.system("rm -rf {}".format(os.path.join(blackboard.TMP_PATH, ".lock")))
 
 if __name__ == "__main__":
     if(len(sys.argv) != 2):
@@ -345,10 +357,11 @@ if __name__ == "__main__":
     logging.basicConfig(format="[%(asctime)s] %(levelname)s: %(message)s", level=eval("logging.{}".format(blackboard.config['logging']['level'].upper())))
     log = logging.getLogger("pepid")
 
-    blackboard.TMP_PATH = tempfile.mkdtemp(prefix="pepidtmp_", dir=blackboard.config['data']['tmpdir'])
+    blackboard.TMP_PATH = os.path.join(blackboard.config['data']['tmpdir'], "pepidrun_" + next(tempfile._get_candidate_names()))
+    blackboard.setup_constants() # overrides TMP_PATH if workdir setting points to a directory to reuse
     if(not os.path.exists(blackboard.TMP_PATH)):
         os.mkdir(blackboard.TMP_PATH)
 
-    blackboard.LOCK = open(os.path.join(blackboard.config['data']['tmpdir'], ".lock"), "wb")
+    blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
 
     run()

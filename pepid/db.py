@@ -10,6 +10,7 @@ import os
 import random
 import copy
 import helper
+import pickle
 
 class DbSettings():
     def __init__(self):
@@ -82,7 +83,7 @@ def identipy_theoretical_spectrum(cands, n):
 
     for i in range(len(cands)):
         seq = cands[i]['sequence']
-        mod = cands[i]['mods'].data
+        mod = cands[i]['mods']
         th_masses = pepid_utils.identipy_theor_spectrum(seq, mod, nterm, cterm)
         ret.append(th_masses)
 
@@ -90,20 +91,21 @@ def identipy_theoretical_spectrum(cands, n):
 
 def theoretical_spectrum(cands):
     """
-    Simple spectrum prediction function generating b- and y-series ions
-    without charged variants
+    Spectrum prediction function generating b- and y-series ions
+    with charged variants
     """
 
     cterm = blackboard.config['search'].getfloat('cterm cleavage')
     nterm = blackboard.config['search'].getfloat('nterm cleavage')
+    max_peaks = blackboard.config['search'].getint('max peaks')
+    max_charge = blackboard.config['search'].getint('max charge')
 
     ret = []
 
-    for i in range(len(cands)):
-        seq = cands[i]['seq']
-        mod = cands[i]['mods'].data
-        th_masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm)
-        ret.append(th_masses.tolist())
+    for cand in cands:
+        seq = cand['seq']
+        mod = cand['mods']
+        ret.append(pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge))
 
     return ret
 
@@ -114,6 +116,10 @@ def user_processing(start, end):
     entry in the temporary database.
     """
 
+    cur = blackboard.CONN.cursor()
+    max_charge = blackboard.config['search'].getint('max charge')
+    max_peaks = blackboard.config['search'].getint('max peaks')
+
     rt_fn = pred_rt
     spec_fn = theoretical_spectrum
     try:
@@ -122,24 +128,22 @@ def user_processing(start, end):
         rt_fn = user_fn
     except:
         import sys
-        sys.stderr.write("[db post]: user rt prediction function not found, using default function instead\n")
+        sys.stderr.write("[db]: user rt prediction function not found, using default function instead\n")
     try:
         mod, fn = blackboard.config['database']['spectrum function'].rsplit('.', 1)
         user_fn = getattr(__import__(mod, fromlist=[fn]), fn)
         spec_fn = user_fn
     except:
         import sys
-        sys.stderr.write("[db post]: user spectrum prediction function not found, using default function instead\n")
+        sys.stderr.write("[db]: user spectrum prediction function not found, using default function instead\n")
 
-    cur = blackboard.CONN.cursor()
     blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
-
     data = cur.fetchall()
+
     rts = rt_fn(data)
     specs = spec_fn(data)
-    max_peaks = blackboard.config['search'].getint('max peaks')
 
-    specs = [blackboard.Spectrum(spec[:min(len(spec), max_peaks)]) for spec in specs]
+    specs = [blackboard.Spectrum(spec) for spec in specs]
     rowids = list(range(start+1, end+1))
 
     blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
@@ -199,7 +203,7 @@ def process_entry(description, buff, settings):
                 for var in var_set:
                     mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                     if settings.min_mass <= mass <= settings.max_mass:
-                        data.append({"desc": description, "seq": peps[j], "mods": blackboard.Meta(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
+                        data.append({"desc": description, "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
     return data
 
 def fill_db(start, end):

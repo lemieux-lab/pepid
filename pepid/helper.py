@@ -4,72 +4,46 @@ import numpy
 import fcntl
 import os
 import pickle
+import array
 
 lib = ctypes.cdll.LoadLibrary("./libhelper.so")
 
 class Query(ctypes.Structure):
-    _fields_ = [("title", ctypes.c_char * 1024),
-                ("rt", ctypes.c_float),
-                ("charge", ctypes.c_int),
-                ("mass", ctypes.c_float),
+    _fields_ = [
                 ("npeaks", ctypes.c_int),
-                ("min_mass", ctypes.c_float),
-                ("max_mass", ctypes.c_float),
-                ("meta", ctypes.c_char * 10240),
-                ("spec", ((ctypes.c_float) * 2) * blackboard.config['search'].getint('max peaks'))]
+                ("spec", (ctypes.POINTER(ctypes.c_float)))]
 
 class Db(ctypes.Structure):
-    _fields_ = [("desc", ctypes.c_char * 1024),
-                ("seq", ctypes.c_char * 128),
-                ("mods", ctypes.c_float * 128),
-                ("rt", ctypes.c_float),
-                ("length", ctypes.c_uint32),
-                ("npeaks", ctypes.c_uint32),
-                ("mass", ctypes.c_float),
-                ("meta", ctypes.c_char * 10240),
-                ("spec", (ctypes.c_float * 2) * blackboard.config['search'].getint('max peaks'))]
-
-class Res(ctypes.Structure):
-    _fields_ = [('title', ctypes.c_char * 1024),
-                ('description', ctypes.c_char * 1024),
-                ('seq', ctypes.c_char * 128),
-                ('modseq', ctypes.c_float * 128),
-                ('length', ctypes.c_int),
-                ('calc_mass', ctypes.c_float),
-                ('mass', ctypes.c_float),
-                ('rt', ctypes.c_float),
-                ('charge', ctypes.c_int),
-                ('score', ctypes.c_double),
-                ('score_data', ctypes.c_char * 10240)]
+    _fields_ = [
+                ("npeaks", ctypes.POINTER(ctypes.c_uint32)),
+                ("spec", ctypes.POINTER(ctypes.c_float)),
+                ("valid_series", ctypes.POINTER(ctypes.c_char))]
 
 class ScoreData(ctypes.Structure):
     _fields_ = [
                 ("cands", ctypes.c_void_p),
                 ("n_cands", ctypes.c_int),
                 ("npeaks", ctypes.c_int),
-                ("elt_size", ctypes.c_uint64),
+                ("n_series", ctypes.c_int),
                 ("tol", ctypes.c_float),
+                ("ppm", ctypes.c_ubyte),
                 ("q", ctypes.c_void_p),
 ]
 
 class ScoreRet(ctypes.Structure):
     _fields_ = [
                 ("distances", ctypes.POINTER(ctypes.c_double)),
-                ("mask", ctypes.POINTER(ctypes.c_char)),
-                ("scores", ctypes.POINTER(ctypes.c_double)),
-                ("sumI", ctypes.POINTER(ctypes.c_double)),
-                ("total_matched", ctypes.POINTER(ctypes.c_uint32)),
-                ("theoretical", ctypes.POINTER(ctypes.c_float)),
-                ("spec", ctypes.POINTER(ctypes.c_float)),
-                ("ncands", ctypes.c_uint32),
-                ("npeaks", ctypes.c_uint32)
+                ("mask", ctypes.POINTER(ctypes.c_ubyte)),
+                ("score", (ctypes.c_double)),
+                ("sumI", (ctypes.c_double)),
+                ("total_matched", (ctypes.c_uint32)),
 ]
 
 lib.rnhs.restype = ctypes.POINTER(ScoreRet)
 lib.alloc.restype = ctypes.c_void_p
 lib.alloc.argtypes = [ctypes.c_uint64]
-lib.score_str.restype = ctypes.c_char_p
-lib.score_str.argtypes = [ctypes.c_void_p]
+#lib.score_str.restype = ctypes.c_char_p
+#lib.score_str.argtypes = [ctypes.c_void_p]
 lib.free_score.argtypes = [ctypes.c_void_p]
 lib.free.argtypes = [ctypes.c_void_p]
 
@@ -79,42 +53,36 @@ def free(obj):
 def free_score(obj):
     lib.free_score(ctypes.pointer(obj))
 
-def query_to_c(q):
-    ret = Query()
+def queries_to_c(q):
+    ret = (Query * len(q))()
     retptr = ctypes.pointer(ret)
 
-    spec = q['spec'].data
+    for i in range(len(q)):
+        spec = q[i]['spec'].data[:blackboard.config['search'].getint('max peaks')]
 
-    ret.title = q['title'].encode('ascii')
-    ret.rt = q['rt']
-    ret.charge = q['charge']
-    ret.mass = q['mass']
-    ret.npeaks = min(len(spec), blackboard.config['search'].getint('max peaks'))
-    ret.min_mass = q['min_mass']
-    ret.max_mass = q['max_mass']
-    #ret.meta = repr(q['meta']).encode('ascii')
-
-    for i in range(min(len(spec), blackboard.config['search'].getint('max peaks'))):
-        ret.spec[i][0] = spec[i][0]
-        ret.spec[i][1] = spec[i][1]
+        ret[i].npeaks = len(spec)
+        ret[i].spec = ctypes.cast((ctypes.c_float * len(spec)).from_buffer(array.array('f', [x for y in spec for x in y])), ctypes.POINTER(ctypes.c_float))
 
     return ctypes.cast(retptr, ctypes.c_void_p)
 
 def one_score_to_py(score, cands, q, n):
+    max_charge = blackboard.config['search'].getint('max charge')
     ret = {}
     ret['distance'] = []
     ret['mask'] = []
     ret['theoretical'] = []
     ret['spec'] = []
-    ret['sumI'] = score.sumI[n]
-    ret['total_matched'] = score.total_matched[n]
-    ret['score'] = score.scores[n]
+    ret['sumI'] = score[n].sumI
+    ret['total_matched'] = score[n].total_matched
+    ret['score'] = score[n].score
 
-    for i in range(len(cands[n]['spec'].data)):
-        if cands[n]['spec'].data[i] != 0:
-            ret['distance'].append(score.distances[n * score.npeaks + i])
-            ret['mask'].append(ord(score.mask[n * score.npeaks + i]))
-    ret['spec'] = q['spec']
+    npeaks = blackboard.config['search'].getint('max peaks')
+    for s in range(len(q[n]['spec'].data)):
+        ret['distance'] = numpy.ctypeslib.as_array(score[n].distances, shape=(max_charge, npeaks))
+        ret['mask'] = numpy.ctypeslib.as_array(score[n].mask, shape=(max_charge, npeaks)).astype('int32')
+        ret['distance'] = [x[:len(q[n]['spec'].data[xi])].tolist() for xi, x in enumerate(ret['distance'])]
+        ret['mask'] = [x[:len(q[n]['spec'].data[xi])] for xi, x in enumerate(ret['mask'])]
+    ret['spec'] = q[n]['spec']
     ret['theoretical'] = cands[n]['spec']
     return ret
 
@@ -126,48 +94,48 @@ def nth_score(score, cands, q, n):
     return ret
 
 def score_to_py(scoreptr, q, cands, n_scores):
-    score = scoreptr[0]
+    score = scoreptr
     ret = []
     for i in range(n_scores):
         s = nth_score(score, cands, q, i)
-        s['title'] = q['title']
+        s['title'] = q[i]['title']
         s['desc'] = cands[i]['desc']
         s['seq'] = cands[i]['seq']
-        s['modseq'] = "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'].data)])
+        s['modseq'] = "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'])])
         ret.append(s)
     return ret
 
-def cands_to_c(cands):
+def cands_to_c(cands, max_charges):
+    max_charge = blackboard.config['search'].getint('max charge')
+    max_peaks = blackboard.config['search'].getint('max peaks')
     ret = (Db * len(cands))()
-    keys = list(cands[0].keys())
     for i in range(len(cands)):
-        for k in keys:
-            if k not in ('spec', 'mods', 'seq', 'desc', 'meta'):
-                setattr(ret[i], k, cands[i][k])
-        ret[i].desc = cands[i]['desc'][:1023].encode('ascii')
-        ret[i].seq = cands[i]['seq'][:127].encode('ascii')
-        spec = cands[i]['spec'].data
-        for j in range(min(len(spec), blackboard.config['search'].getint('max peaks'))):
-            ret[i].spec[j][0] = spec[j]
-            ret[i].spec[j][1] = 0
-        for j in range(min(len(cands[i]['mods'].data), 127)):
-            ret[i].mods[j] = cands[i]['mods'].data[j]
-        ret[i].npeaks = min(len(cands[i]['spec'].data), blackboard.config['search'].getint('max peaks'))
-        ret[i].length = min(len(cands[i]['seq']), 127)
-    return ctypes.cast(ret, ctypes.c_void_p)
+        spec = cands[i]['spec'].data.astype('float32')
+        ret[i].npeaks = ctypes.cast((ctypes.c_uint32 * len(spec)).from_buffer(array.array('I', [len(sp) for sp in spec])), ctypes.POINTER(ctypes.c_uint32))
+        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [k < (max_charges[i]-1)*2 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
+        specp = [0.0] * (len(spec) * max_peaks)
+        for s in range(len(spec)):
+            specp[s * max_peaks:s * max_peaks + len(spec[s])] = spec[s]
+        ret[i].spec = ctypes.cast((ctypes.c_float * len(specp)).from_buffer(array.array('f', specp)), ctypes.POINTER(ctypes.c_float))
 
-def rnhs(q, cands, tol):
-    qptr = query_to_c(q)
-    ccands = cands_to_c(cands)
+    return ctypes.cast(ret, ctypes.c_void_p), specp
+
+def rnhs(q, cands, tol, ppm, whole_data=True):
+    qptr = queries_to_c(q)
+    ccands, _ = cands_to_c(cands, [qq['charge'] for qq in q])
     data = ScoreData()
     data.q = qptr
     data.tol = tol
+    data.ppm = 1 if ppm else 0
     data.n_cands = len(cands)
     data.npeaks = blackboard.config['search'].getint('max peaks')
-    data.elt_size = ctypes.sizeof(Db)
+    data.n_series = blackboard.config['search'].getint('max charge') * 2
     data.cands = ccands
     ret = lib.rnhs(data)
-    out = score_to_py(ret, q, cands, ret[0].ncands)
+    if whole_data:
+        out = score_to_py(ret, q, cands, len(cands))
+    else:
+        out = [ret[i].score for i in range(len(cands))]
     lib.free_score(ret)
     return out
 

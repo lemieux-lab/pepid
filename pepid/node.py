@@ -70,8 +70,5 @@ def init(klass):
     if len(sys.argv) == 3:
         blackboard.config.read(sys.argv[2])
 
-    blackboard.setup_constants()
-    blackboard.LOCK = open(os.path.join(blackboard.config['data']['tmpdir'], ".lock"), "wb")
-
     this = klass(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket_" + sock))
     this.start()

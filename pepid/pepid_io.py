@@ -4,6 +4,7 @@ import time
 import numpy
 import tqdm
 import queries
+import sys
 
 def write_output():
     """
@@ -16,7 +17,7 @@ def write_output():
     out_fname = blackboard.config['data']['output']
     outf = open(out_fname, 'w')
 
-    header = blackboard.RES_COLS[:-1] + ['rowid']
+    header = blackboard.RES_COLS[:-2]
 
     outf.write("\t".join(header) + "\n")
 
@@ -26,7 +27,7 @@ def write_output():
     #cur = blackboard.CONN.cursor()
     import glob
     fname_pattern = list(filter(lambda x: len(x) > 0, blackboard.config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_*_pepidpart.sqlite"
-    fname_path = os.path.join(blackboard.config['data']['tmpdir'], fname_pattern)
+    fname_path = os.path.join(blackboard.TMP_PATH, fname_pattern)
 
     files = glob.glob(fname_path)
     #blackboard.execute(cur, "SELECT {} FROM results as r1 WHERE r1.rowid IN (SELECT r2.rowid FROM results AS r2 WHERE r1.title = r2.title ORDER BY r2.score DESC LIMIT ?) ORDER BY title ASC, score DESC;".format(",".join(blackboard.RES_COLS)), (n_cands,))
@@ -47,28 +48,22 @@ def write_output():
         blackboard.execute(cur, "PRAGMA synchronous=OFF;")
         blackboard.execute(cur, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
 
-        blackboard.execute(cur, "SELECT results.rowid, results.candrow, results.qrow, {} FROM results JOIN (SELECT title, IFNULL((SELECT score FROM results WHERE title = titles.title AND score > 0 ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT title FROM results) AS titles) AS cutoffs ON results.title = cutoffs.title AND results.score >= cutoffs.cutoff_score;".format(",".join(map(lambda x: "results." + x, blackboard.RES_COLS[:-3]))), (n_cands-1,))
+        blackboard.execute(cur, "SELECT results.rowid, {} FROM results JOIN (SELECT qrow, IFNULL((SELECT score FROM results WHERE qrow = qrows.qrow ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT qrow FROM results) AS qrows) AS cutoffs ON results.qrow = cutoffs.qrow AND results.score >= cutoffs.cutoff_score ORDER BY results.title ASC, results.score DESC;".format(",".join(map(lambda x: "results." + x, header[:-1]))), (n_cands-1,))
+        fetch_batch_size = min(batch_size, 62000)
         while True:
-            results = cur.fetchmany(batch_size)
-            results = list(map(dict, results))
+            results = cur.fetchmany(fetch_batch_size)
             if len(results) == 0:
                 break
-            buff = ""
-            res_data = []
-            import search
-            for r in results:
-                blackboard.execute(main_cur, "SELECT * FROM candidates WHERE rowid = ? LIMIT 1;", (r['candrow'],))
-                res_cand = main_cur.fetchone()
-                blackboard.execute(main_cur, "SELECT * FROM queries WHERE rowid = ? LIMIT 1;", (r['qrow'],))
-                res_q = main_cur.fetchone()
-                res_data.append(search.crnhs([res_cand], res_q))
-            for res, data in zip(results, res_data):
+
+            results = list(map(dict, results))
+            for idata, data in enumerate(results):
+                buff = ""
                 fields = []
-                for k in header[:-3]:
-                    fields.append(str(res[k]).replace(";", ","))
-                fields.append(str(data).replace(";", ","))
+                for k in header[:-1]:
+                    fields.append(str(data[k]).replace("\t", "    "))
+                #fields.append(str(data['rowid']))
                 buff = buff + "\t".join(fields) + "\n"
-            outf.write(buff)
+                outf.write(buff)
         del cur
         del conn
 

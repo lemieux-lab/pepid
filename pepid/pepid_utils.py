@@ -80,8 +80,7 @@ def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
                 masses.append(nterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z))
             else:
                 raise ValueError("Series '{}' not supported, available series are {}".format(s, list(cterm_generators.keys()) + list(nterm_generators.keys())))
-    masses = numpy.hstack(masses)
-    masses.sort()
+    masses = numpy.vstack(masses)
     return masses
 
 def identipy_get_n_ions(peptide, mods, maxmass, pl, charge):

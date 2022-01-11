@@ -9,12 +9,12 @@ import re
 import helper
 import functools
 import pickle
+import db
 
-def crnhs(cands, query):
-    acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
-    acc = blackboard.config['search'].getfloat('peak matching tolerance')
-    upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
-    ret = helper.rnhs(query, cands, upper_bound)
+def crnhs(cands, queries, whole_data=True):
+    ppm = blackboard.config['search']['matching unit'] == 'ppm'
+    tol = blackboard.config['search'].getfloat('peak matching tolerance')
+    ret = helper.rnhs(queries, cands, tol, ppm, whole_data)
     return ret
 
 def identipy_rnhs2(cands, query):
@@ -277,7 +277,11 @@ def search_core(start, end):
     tol = blackboard.config['search'].getfloat('peak matching tolerance')
     is_ppm = blackboard.config['search']['matching unit'] == "ppm"
 
-    scoring_fn = rnhs
+    min_mass = blackboard.config['database'].getfloat('min mass')
+    max_mass = blackboard.config['database'].getfloat('max mass')
+    max_peaks = blackboard.config['search'].getint('max peaks')
+
+    scoring_fn = crnhs
     try:
         mod, fn = blackboard.config['scoring']['score function'].rsplit('.', 1)
         user_fn = getattr(__import__(mod, fromlist=[fn]), fn)
@@ -295,20 +299,21 @@ def search_core(start, end):
     queries = cur.fetchall()
 
     for iq, q in enumerate(queries):
-        if(q['mass'] > 0):
-            blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
-            
-            while True:
-                cands = cur.fetchmany(batch_size)
-                if len(cands) == 0:
-                    break
-                res = scoring_fn(cands, q)
-                for i, r in enumerate(res):
-                    r['data'] = b'\0'
-                    r['candrow'] = cands[i]['rowid']
-                    r['qrow'] = q['rowid']
-                blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), res)
-    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_title_idx ON results (title ASC, score DESC);")
+        blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
+        
+        while True:
+            cands = cur.fetchmany(batch_size)
+            if len(cands) == 0:
+                break
+
+            all_q = [q] * len(cands)
+
+            res = scoring_fn(cands, all_q, whole_data=True)
+            import sys
+            r = [{'data': b'', 'candrow': c['rowid'], 'qrow': q['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
+            blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), r)
+            blackboard.RES_CONN.commit()
+    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_qrow_idx ON results (qrow ASC, score DESC);")
     blackboard.RES_CONN.commit()
 
 def prepare_search():

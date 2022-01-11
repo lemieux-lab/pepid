@@ -27,6 +27,11 @@ def fill_queries(start, end):
     tol_l, tol_r = list(map(lambda x: float(x.strip()), blackboard.config['search']['candidate filtering tolerance'].split(",")))
     is_ppm = blackboard.config['search']['filtering unit'] == "ppm"
 
+    min_mass = blackboard.config['database'].getfloat('min mass')
+    max_mass = blackboard.config['database'].getfloat('max mass')
+    min_charge = blackboard.config['search'].getint('min charge')
+    max_charge = blackboard.config['search'].getint('max charge')
+
     data = []
 
     entry_idx = -1
@@ -45,7 +50,6 @@ def fill_queries(start, end):
             break
         else:
             if l[:len("TITLE=")] == "TITLE=":
-                data.append({k:None for k in blackboard.QUERY_COLS})
                 title = l[len("TITLE="):].strip()
             elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
                 rt = int(l[len("RTINSECONDS="):].strip())
@@ -55,17 +59,19 @@ def fill_queries(start, end):
                 precmass = float(l[len("PEPMASS="):].split(maxsplit=1)[0])
             elif l[:len("END IONS")] == "END IONS":
                 precmass = (precmass * charge) - charge
-                delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
-                delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
-                data[-1]['title'] = title
-                data[-1]['rt'] = rt
-                data[-1]['charge'] = charge
-                data[-1]['mass'] = precmass
-                data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
-                data[-1]['min_mass'] = precmass + delta_l
-                data[-1]['max_mass'] = precmass + delta_r
-                data[-1]['meta'] = blackboard.Meta(None)
-                
+                if (min_mass <= precmass <= max_mass) and (min_charge <= charge <= max_charge):
+                    data.append({k:None for k in blackboard.QUERY_COLS})
+                    delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
+                    delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
+                    data[-1]['title'] = title
+                    data[-1]['rt'] = rt
+                    data[-1]['charge'] = charge
+                    data[-1]['mass'] = precmass
+                    data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
+                    data[-1]['min_mass'] = precmass + delta_l
+                    data[-1]['max_mass'] = precmass + delta_r
+                    data[-1]['meta'] = blackboard.Meta(None)
+                    
             elif '0' <= l[0] <= '9':
                 mz, intens = l.split(maxsplit=1)
                 mz_arr.append(float(mz))

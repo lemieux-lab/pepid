@@ -4,6 +4,7 @@ import sqlite3
 import time
 import uuid
 import pickle
+import sys
 
 CONN = None
 RES_CONN = None
@@ -54,7 +55,7 @@ def init_results_db(generate=False, base_dir=None):
     global RES_CONN
 
     if base_dir is None:
-        base_dir = config['data']['tmpdir']
+        base_dir = TMP_PATH
 
     if generate:
         unique = str(uuid.uuid4())
@@ -100,11 +101,13 @@ def setup_constants():
     global RES_DB_FNAME
     global RES_DB_PATH
 
+    global TMP_PATH
+
     RES_COLS = ["title", "desc", "seq", "modseq", "score", "data", "candrow", "qrow"]
     RES_TYPES = ["TEXT", "TEXT", "TEXT", "TEXT", "REAL", "BLOB", "INTEGER", "INTEGER"]
 
     DB_COLS = ["desc", "seq", "mods", "rt", "length", "mass", "spec", "meta"]
-    DB_TYPES = ["TEXT", "TEXT", "META", "REAL", "INTEGER", "REAL", "SPECTRUM", "META"]
+    DB_TYPES = ["TEXT", "TEXT", "AUTOBLOB", "REAL", "INTEGER", "REAL", "SPECTRUM", "META"]
 
     QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
     QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL", "META"]
@@ -113,18 +116,22 @@ def setup_constants():
     sqlite3.register_adapter(Meta, lambda x: pickle.dumps(x.data))
     sqlite3.register_converter("spectrum", lambda x: Spectrum(pickle.loads(x)))
     sqlite3.register_converter("meta", lambda x: Meta(pickle.loads(x)))
+    sqlite3.register_converter("autoblob", lambda x: pickle.loads(x))
 
     DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
     RES_DB_FNAME = DB_FNAME
-    DB_PATH = os.path.join(config['data']['tmpdir'], DB_FNAME)
-    RES_DB_PATH = DB_PATH + ".sqlite"
 
-    if not config['pipeline'].getboolean('db processing'):
-        if config['data'].getboolean('preprocessed database', fallback=True):
-            DB_PATH = config['data']['preprocessed database']
-            RES_DB_PATH = DB_PATH + ".sqlite"
-            DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['preprocessed database'].split('/')))[-1]
-            RES_DB_FNAME = DB_FNAME
+    workdir = config['data']['workdir']
+    try:
+        no_workdir = config['data'].getboolean('workdir')
+        if no_workdir:
+            sys.stderr.write("[pepid]: workdir set to true is invalid; expected path or false\n")
+            sys.exit(1)
+    except:
+        TMP_PATH = config['data']['workdir']
+
+    DB_PATH = os.path.join(TMP_PATH, DB_FNAME)
+    RES_DB_PATH = DB_PATH + ".sqlite"
 
 def prepare_connection():
     global CONN

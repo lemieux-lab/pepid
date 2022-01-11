@@ -1,5 +1,5 @@
 #include "helper.h"
-
+/*
 // Given key data and an array of indices, reorder the elements of data so they fit the indices
 void reorder_key(float* data, uint64_t* indices, int n, uint64_t offset) {
     for(int i = 0; i < n; i++) {
@@ -745,7 +745,7 @@ res* make_res(double* scores, score_ret score_data, char* title, float mass, flo
         score_data_to_str(out[i].score_data, score_data, i, sizeof(out[i].score_data) / sizeof(char));
     }
     return out;
-}
+}*/
 
 void free_ret(ret r) {
     free(r.data);
@@ -756,137 +756,122 @@ void free_ptr(void* r) {
 }
 
 void free_score(score_ret* score) {
-    free(score->distances);
-    free(score->mask);
-    free(score->scores);
-    free(score->sumI);
-    free(score->total_matched);
-    free(score->theoretical);
-    free(score->spec);
+    free(score[0].distances);
+    free(score[0].mask);
     free(score);
+}
+
+double ppm_tol(float q, float tol) {
+    //return q * pow(10.0, -6.0) * tol;
+    //float fake = 2000.0 * 0.000001 * tol;
+    float real = q * 0.000001 * tol;
+    //return MIN(fake, real);
+    return real;
+}
+
+double ppm_dist(float q, float c) {
+   return ((q - c) / q) * 100000.0;
 }
 
 //score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size, float tol) {
 score_ret* rnhs(score_data d) {
-    query* q = d.q;
+    query* queries = d.q;
     void* cands = d.cands;
     int n_cands = d.n_cands;
     int npeaks = d.npeaks;
-    uint64_t elt_size = d.elt_size;
     float tol = d.tol;
+    int n_series = d.n_series;
+    char ppm = d.ppm;
 
-    score_ret* r = calloc(sizeof(score_ret), 1);
-    r->ncands = n_cands;
-    r->npeaks = q->npeaks;
-    r->distances = calloc(n_cands * npeaks, sizeof(double));
-    r->mask = calloc(n_cands * npeaks, sizeof(char));
-    r->scores = calloc(n_cands, sizeof(double));
-    r->sumI = calloc(n_cands, sizeof(double));
-    r->total_matched = calloc(n_cands, sizeof(uint32_t));
-    r->theoretical = calloc(n_cands * npeaks * 2, sizeof(float));
-    r->spec = calloc(n_cands * npeaks * 2, sizeof(float));
+    score_ret* r = calloc(sizeof(score_ret), n_cands);
+    double* distances = calloc(n_series * n_cands * npeaks, sizeof(double));
+    char* mask = calloc(n_series * n_cands * npeaks, sizeof(char));
 
-    int32_t* indices = calloc(n_cands * npeaks, sizeof(int32_t));
-    memset(indices, -1, n_cands * npeaks * sizeof(int32_t));
-    uint32_t* prev_inds = calloc(n_cands, sizeof(uint32_t));
+    for(int i = 0; i < n_series * n_cands * npeaks; i++) {
+        distances[i] = -1.0;
+    }
+
+    int32_t* indices = calloc(n_series * n_cands * npeaks, sizeof(int32_t));
+    memset(indices, -1, n_series * n_cands * npeaks * sizeof(int32_t));
+    uint32_t* prev_inds = calloc(n_series * n_cands, sizeof(uint32_t));
 
     double intens_norm = 0;
 
-    #ifdef HELPER_BSEARCH
-    for(int i = 0; i < q->npeaks; i++) {
-        intens_norm += q->spec[i][1];
-        for(int j = 0; j < n_cands; j++) {
-            db* cand = ((db*)(cands + elt_size * j));
-            int candpeaks = cand->npeaks;
-            if(cand->npeaks == 0) { continue; }
-            void* found = bsearch_ineq((void*)(&(q->spec[i][0])), &(cand->spec[prev_inds[j]]), candpeaks - prev_inds[j], 2 * sizeof(float), &float_cmp, 0);
-            if(!found) { continue; }
-            int idx = (found - (void*)(cand->spec)) / (2 * sizeof(float));
-            float dist = cand->spec[idx][0] - q->spec[i][0];
-            float dist_next = q->spec[i][0] - cand->spec[idx+1][0];
-            if(dist < dist_next && dist < tol) {
-                prev_inds[j] = idx;
-                r->distances[j * npeaks + idx] = dist;
-                indices[j * npeaks + idx] = idx;
-            } else if(dist_next < tol) {
-                prev_inds[j] = idx+1;
-                r->distances[j * npeaks + idx+1] = dist_next;
-                indices[j * npeaks + idx+1] = idx+1;
-            }
-        }
-    }
-    #else
-    for(int i = 0; i < q->npeaks; i++) {
-        intens_norm += q->spec[i][1];
-        for(int j = 0; j < n_cands; j++) {
-            db* cand = ((db*)(cands + elt_size * j));
-            int candpeaks = cand->npeaks;
+    for(int j = 0; j < n_cands; j++) {
+        intens_norm = 0;
+        db* cand = &(((db*)cands)[j]);
+        query* q = &(((query*)queries)[j]);
+        r[j].distances = distances + npeaks * n_series * j;
+        r[j].mask = mask + npeaks * n_series * j;
 
-            for(int k = prev_inds[j]; k < candpeaks; k++) {
-                double this_dist = q->spec[i][0] - cand->spec[k][0];
-                if(this_dist > 0) {
-                    prev_inds[j] = k;
-                }
-                double abs_dist = ABS(this_dist);
-                if(abs_dist < tol) {
-                    if((r->distances[j * npeaks + k] == 0) || (abs_dist < r->distances[j * npeaks + k])) {
-                        r->distances[j * npeaks + k] = abs_dist;
-                        indices[j * npeaks + k] = k;
+        for(int s = 0; s < n_series && cand->valid_series[s]; s++) {
+            int candpeaks = cand->npeaks[s];
+            int prev_ind = 0;
+            for(int k = 0; k < candpeaks; k++) {
+                for(int i = prev_ind; i < q->npeaks; i++) {
+                    if(s == 0 && k == 0) {
+                        intens_norm += q->spec[i*2+1];
                     }
-                } else if(this_dist < 0) {
-                    // outside tol and higher m/z than current spec peak, impossible to find a better match
-                    break;
+
+                    double this_dist = ppm? ppm_dist(q->spec[i*2+0], cand->spec[s*npeaks+k]) : (q->spec[i*2+0] - cand->spec[s * npeaks + k]);
+                    double abs_dist = ABS(this_dist);
+                    //fprintf(stderr, "%f <= %f?\n", abs_dist, tol);
+
+                    if(abs_dist <= tol) {
+                       // fprintf(stderr, "%f <= %f!!\n", abs_dist, tol);
+                        if((r[j].distances[s * npeaks + k] < 0) || (abs_dist < r->distances[s * n_series + k])) {
+                            r[j].distances[s * npeaks + k] = abs_dist;
+                            indices[s * npeaks * n_cands + j * npeaks + k] = i;
+                            prev_ind = i;
+                        }
+                    } else if(this_dist < 0) {
+                        // outside tol and higher m/z than current spec peak, impossible to find a better match
+                        prev_ind--;
+                        break;
+                    }
                 }
             }
         }
     }
-    #endif
 
     for(int j = 0; j < n_cands; j++) {
-        db* cand = ((db*)(cands + elt_size * j));
+        db* cand = &(((db*)cands)[j]);
+        query* q = &(((query*)queries)[j]);
 
-        uint64_t* mult = calloc(n_cands, sizeof(uint64_t));
-        uint32_t mult_idx = 0;
+        uint64_t* mult = calloc(n_series, sizeof(uint64_t));
 
         double score = 0;
         uint32_t total_matched = 0;
         double total_intens = 0;
 
-        uint32_t n_matched = 0;
-        double intens_sum = 0;
+        for(int s = 0; s < n_series && cand->valid_series[s]; s++) {
+            uint32_t n_matched = 0;
+            double intens_sum = 0;
 
-        for(int i = 0; i < cand->npeaks; i++) {
-            if(indices[j * npeaks + i] >= 0) {
-                r->mask[j * npeaks + i] = 1;
-                n_matched++;
-                intens_sum += q->spec[i][1];
+            for(int i = 0; i < cand->npeaks[s]; i++) {
+                if(indices[s * n_cands * npeaks + j * npeaks + i] >= 0) {
+                    r[j].mask[i + s * npeaks] = 1;
+                    n_matched++;
+                    intens_sum += q->spec[i * 2 + 1];
+                }
             }
-        }
-        if(n_matched > 0) {
-            total_matched += n_matched;
-            mult[mult_idx] = FACT[MIN(n_matched, 20)];
-            mult_idx++;
-            total_intens += intens_sum;
-            score += (float)(intens_sum) / intens_norm;
+            if(n_matched > 0) {
+                total_matched += n_matched;
+                mult[s] = FACT[MIN(n_matched, 20)];
+                total_intens += intens_sum;
+                score += (float)(intens_sum) / intens_norm;
+            }
         }
         if(total_matched == 0) {
             free(mult);
             continue;
         }
-        for(int i = 0; i < mult_idx; i++) {
+        for(int i = 0; i < n_series && cand->valid_series[i]; i++) {
             score *= mult[i]; 
         }
-        r->scores[j] = score;
-        r->sumI[j] = (total_intens != 0)? log10(total_intens) : 0;
-        r->total_matched[j] = total_matched;
-        for(int i = 0; i < cand->npeaks; i++) {
-            r->theoretical[j*2*npeaks + i*2] = cand->spec[i][0];
-            r->theoretical[j*2*npeaks + i*2 + 1] = cand->spec[i][1];
-        }
-        for(int i = 0; i < q->npeaks; i++) {
-            r->spec[j*2*npeaks + i*2] = q->spec[i][0];
-            r->spec[j*2*npeaks + i*2 + 1] = q->spec[i][1];
-        }
+        r[j].score = score;
+        r[j].sumI = (total_intens != 0)? log10(total_intens) : 0;
+        r[j].total_matched = total_matched;
         free(mult);
     }
 
@@ -899,6 +884,7 @@ void* alloc(uint64_t n) {
     return calloc(1, n);
 }
 
+/*
 int print_char_array(char** str, int offset, int* capacity, char* arr, int n_elts) {
     int orig_offset = offset;
     char* fmt_str = "%d,%d,%d,%d";
@@ -937,7 +923,7 @@ int print_char_array(char** str, int offset, int* capacity, char* arr, int n_elt
             case 1:
                 new_offset = snprintf(*str + offset, *capacity - offset, "%d", arr[n_elts-1]);
                 break;
-            default: break; /* 0 */
+            default: break; /* 0 /
         }
         if(new_offset >= *capacity - offset) {
             *capacity = MAX(2 * *capacity, *capacity - offset + new_offset);
@@ -991,7 +977,7 @@ int print_double_array(char** str, int offset, int* capacity, double* arr, int n
             case 1:
                 new_offset = snprintf(*str + offset, *capacity - offset, "%f", arr[n_elts-1]);
                 break;
-            default: break; /* 0 */
+            default: break; /* 0 /
         }
         if(new_offset >= *capacity - offset) {
             *capacity = MAX(2 * *capacity, *capacity - offset + new_offset);
@@ -1017,3 +1003,4 @@ char* score_str(score_ret* data, int n) {
     printed += snprintf(ret + printed, max_size - printed, "],'total_matched':%d,'sumI':%f}", data->total_matched[n], data->sumI[n]);
     return ret;
 }
+*/
