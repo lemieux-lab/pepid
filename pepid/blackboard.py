@@ -71,7 +71,7 @@ def init_results_db(generate=False, base_dir=None):
             cur.execute("PRAGMA synchronous=OFF;")
             #cur.execute("PRAGMA mmap_size=8589934560;") # 8GB/48 threads
             #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
-            cur.execute("PRAGMA cache_size=-1048576;") # negative value = multiples of page matching 1024 * -value as closely as possible
+            #cur.execute("PRAGMA cache_size=-1048576;") # negative value = multiples of page matching 1024 * -value as closely as possible
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             #cur.execute("PRAGMA journal_mode=WAL;")
@@ -149,7 +149,7 @@ def prepare_connection():
             #cur.execute("PRAGMA mmap_size=8589934592;") # 8GB
             #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
             #cur.execute("PRAGMA cache_size=100;")
-            cur.execute("PRAGMA cache_size=-1048576;")
+            #cur.execute("PRAGMA cache_size=-1048576;")
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             #cur.execute("PRAGMA journal_mode=WAL;")

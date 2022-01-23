@@ -298,6 +298,7 @@ def search_core(start, end):
     blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     queries = cur.fetchall()
 
+    import sys
     for iq, q in enumerate(queries):
         blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
         
@@ -308,11 +309,16 @@ def search_core(start, end):
 
             all_q = [q] * len(cands)
 
+            #import sys
+            #sys.stderr.write("{} {} {}\n".format(len(cands), len(all_q), True))
             res = scoring_fn(cands, all_q, whole_data=True)
-            import sys
+            #sys.stderr.write("GOT SCORE!!\n")
+            #import sys
             r = [{'data': b'', 'candrow': c['rowid'], 'qrow': q['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
+            #sys.stderr.write("INSERT SCORE...\n")
             blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), r)
             blackboard.RES_CONN.commit()
+            #sys.stderr.write("DONE SCORE!\n")
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_qrow_idx ON results (qrow ASC, score DESC);")
     blackboard.RES_CONN.commit()
 

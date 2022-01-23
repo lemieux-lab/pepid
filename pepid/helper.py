@@ -65,6 +65,22 @@ def queries_to_c(q):
 
     return ctypes.cast(retptr, ctypes.c_void_p)
 
+def one_score_to_py_dummy(score, cands, q, n):
+    ret = {}
+    ret['distance'] = []
+    ret['mask'] = []
+    ret['theoretical'] = []
+    ret['spec'] = []
+    ret['sumI'] = score[n].sumI
+    ret['total_matched'] = score[n].total_matched
+    ret['score'] = score[n].score
+
+    ret['distance'] = [0]
+    ret['mask'] = [0]
+    ret['spec'] = q[n]['spec']
+    ret['theoretical'] = cands[n]['spec']
+    return ret
+
 def one_score_to_py(score, cands, q, n):
     max_charge = blackboard.config['search'].getint('max charge')
     ret = {}
@@ -77,11 +93,12 @@ def one_score_to_py(score, cands, q, n):
     ret['score'] = score[n].score
 
     npeaks = blackboard.config['search'].getint('max peaks')
-    for s in range(len(q[n]['spec'].data)):
-        ret['distance'] = numpy.ctypeslib.as_array(score[n].distances, shape=(max_charge, npeaks))
-        ret['mask'] = numpy.ctypeslib.as_array(score[n].mask, shape=(max_charge, npeaks)).astype('int32')
-        ret['distance'] = [x[:len(q[n]['spec'].data[xi])].tolist() for xi, x in enumerate(ret['distance'])]
-        ret['mask'] = [x[:len(q[n]['spec'].data[xi])] for xi, x in enumerate(ret['mask'])]
+
+    distances = numpy.ctypeslib.as_array(score[n].distances, shape=(max_charge*2, npeaks))
+    masks = numpy.ctypeslib.as_array(score[n].mask, shape=(max_charge*2, npeaks)).astype('int32')
+    
+    ret['distance'] = distances[:q[n]['charge']*2,:len(q[n]['spec'].data)].tolist()
+    ret['mask'] = masks[:q[n]['charge']*2,:len(q[n]['spec'].data)].tolist()
     ret['spec'] = q[n]['spec']
     ret['theoretical'] = cands[n]['spec']
     return ret
@@ -91,6 +108,7 @@ def nth_score(score, cands, q, n):
     ret_data = one_score_to_py(score, cands, q, n)
     ret['data'] = ret_data
     ret['score'] = ret_data['score']
+    #ret['score'] = 0
     return ret
 
 def score_to_py(scoreptr, q, cands, n_scores):
@@ -105,14 +123,14 @@ def score_to_py(scoreptr, q, cands, n_scores):
         ret.append(s)
     return ret
 
-def cands_to_c(cands, max_charges):
+def cands_to_c(cands, q_charges):
     max_charge = blackboard.config['search'].getint('max charge')
     max_peaks = blackboard.config['search'].getint('max peaks')
     ret = (Db * len(cands))()
     for i in range(len(cands)):
         spec = cands[i]['spec'].data.astype('float32')
         ret[i].npeaks = ctypes.cast((ctypes.c_uint32 * len(spec)).from_buffer(array.array('I', [len(sp) for sp in spec])), ctypes.POINTER(ctypes.c_uint32))
-        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [k < (max_charges[i]-1)*2 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
+        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [k < (q_charges[i]-1)*2 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
         specp = [0.0] * (len(spec) * max_peaks)
         for s in range(len(spec)):
             specp[s * max_peaks:s * max_peaks + len(spec[s])] = spec[s]

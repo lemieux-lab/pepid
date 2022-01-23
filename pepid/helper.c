@@ -773,7 +773,24 @@ double ppm_dist(float q, float c) {
    return ((q - c) / q) * 100000.0;
 }
 
-//score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size, float tol) {
+/*
+def identipy_rnhs(cands, query):
+    import scipy
+    from scipy import spatial
+    ret = []
+    scores = []
+
+    spectrum = numpy.asarray(query['spec'])
+    mz_array = spectrum[:,0]
+    charge = query['charge']
+    qmass = query['mass']
+
+    nterm = blackboard.config['search'].getfloat('nterm cleavage')
+    cterm = blackboard.config['search'].getfloat('cterm cleavage')
+    tree = scipy.spatial.cKDTree(mz_array.reshape((mz_array.size, 1)))
+    acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
+    acc = blackboard.config['search'].getfloat('peak matching tolerance')
+*/
 score_ret* rnhs(score_data d) {
     query* queries = d.q;
     void* cands = d.cands;
@@ -795,33 +812,80 @@ score_ret* rnhs(score_data d) {
     memset(indices, -1, n_series * n_cands * npeaks * sizeof(int32_t));
     uint32_t* prev_inds = calloc(n_series * n_cands, sizeof(uint32_t));
 
-    double intens_norm = 0;
-
+/*
+    for i in range(cands[1]):
+*/
     for(int j = 0; j < n_cands; j++) {
-        intens_norm = 0;
-        db* cand = &(((db*)cands)[j]);
+/*
+    norm = spectrum[:,1].sum()
+*/
+        double intens_norm = 0;
         query* q = &(((query*)queries)[j]);
+
+        for(int i = 0; i < q->npeaks; i++) {
+            intens_norm += q->spec[i*2+1];
+        }
+/*
+        cand = cands[0][i]
+        theoretical = numpy.zeros((cand.npeaks,)) # xxx: needs to be dict, etc.
+        for j in range(cand.npeaks):
+            theoretical[j] = cand.spec[j][0]
+
+        score = 0
+        mult = []
+        match = {}
+        match2 = {}
+        total_matched = 0
+        sumI = 0
+
+        dist_all = []
+*/
+        db* cand = &(((db*)cands)[j]);
+
         r[j].distances = distances + npeaks * n_series * j;
         r[j].mask = mask + npeaks * n_series * j;
 
+        uint64_t* mult = calloc(n_series, sizeof(uint64_t));
+
+        double score = 0;
+        uint32_t total_matched = 0;
+        double total_intens = 0;
+
+/*
+        for ion, fragments in theoretical.items():
+            if ion[-1] >= charge:
+                break
+ */
         for(int s = 0; s < n_series && cand->valid_series[s]; s++) {
+/*
+            dist, ind = tree.query(fragments, distance_upper_bound=acc if not acc_ppm else (float(acc) / 1e6 * 2000))
+            
+            mask1 = (dist != numpy.inf)
+            if acc_ppm:
+                nacc = numpy.where(dist[mask1] / mz_array[ind[mask1]] * 1e6 > acc)[0]
+                mask2 = mask1.copy()
+                mask2[nacc] = False
+            else:
+                mask2 = mask1
+            nmatched = mask2.sum()
+*/
             int candpeaks = cand->npeaks[s];
             int prev_ind = 0;
-            for(int k = 0; k < candpeaks; k++) {
-                for(int i = prev_ind; i < q->npeaks; i++) {
-                    if(s == 0 && k == 0) {
-                        intens_norm += q->spec[i*2+1];
-                    }
+            int nmatched = 0;
+            double intens_sum = 0;
 
-                    double this_dist = ppm? ppm_dist(q->spec[i*2+0], cand->spec[s*npeaks+k]) : (q->spec[i*2+0] - cand->spec[s * npeaks + k]);
+            for(int k = 0; k < q->npeaks; k++) {
+                for(int i = prev_ind; i < candpeaks; i++) {
+                    double this_dist = ppm? ppm_dist(q->spec[k*2+0], cand->spec[s*npeaks+i]) : (q->spec[k*2+0] - cand->spec[s*npeaks+i]);
                     double abs_dist = ABS(this_dist);
-                    //fprintf(stderr, "%f <= %f?\n", abs_dist, tol);
 
                     if(abs_dist <= tol) {
-                       // fprintf(stderr, "%f <= %f!!\n", abs_dist, tol);
-                        if((r[j].distances[s * npeaks + k] < 0) || (abs_dist < r->distances[s * n_series + k])) {
+                        if((r[j].distances[s * npeaks + k] < 0) || (abs_dist < r->distances[s * npeaks + k])) {
                             r[j].distances[s * npeaks + k] = abs_dist;
                             indices[s * npeaks * n_cands + j * npeaks + k] = i;
+                            nmatched++;
+                            intens_sum += q->spec[k*2+1];
+                            r[j].mask[k + s * npeaks] = 1;
                             prev_ind = i;
                         }
                     } else if(this_dist < 0) {
@@ -831,55 +895,67 @@ score_ret* rnhs(score_data d) {
                     }
                 }
             }
-        }
-    }
 
-    for(int j = 0; j < n_cands; j++) {
-        db* cand = &(((db*)cands)[j]);
-        query* q = &(((query*)queries)[j]);
+/*
+            if nmatched:
+                total_matched += nmatched
+                mult.append(numpy.math.factorial(nmatched))
+                sumi = spectrum[:,1][ind[mask2]].sum()
+                sumI += sumi
+                score += sumi / norm
+                dist_all.extend(dist[mask2])
+            match[ion] = mask2
+            match2[ion] = mask2
+*/
 
-        uint64_t* mult = calloc(n_series, sizeof(uint64_t));
-
-        double score = 0;
-        uint32_t total_matched = 0;
-        double total_intens = 0;
-
-        for(int s = 0; s < n_series && cand->valid_series[s]; s++) {
-            uint32_t n_matched = 0;
-            double intens_sum = 0;
-
-            for(int i = 0; i < cand->npeaks[s]; i++) {
-                if(indices[s * n_cands * npeaks + j * npeaks + i] >= 0) {
-                    r[j].mask[i + s * npeaks] = 1;
-                    n_matched++;
-                    intens_sum += q->spec[i * 2 + 1];
-                }
-            }
-            if(n_matched > 0) {
-                total_matched += n_matched;
-                mult[s] = FACT[MIN(n_matched, 20)];
+            if(nmatched > 0) {
+                total_matched += nmatched;
                 total_intens += intens_sum;
                 score += (float)(intens_sum) / intens_norm;
+                mult[s] = FACT[MIN(nmatched, 20)];
+            } else {
+                mult[s] = 1;
             }
         }
+/*
+        if not total_matched:
+            ret.append(None)
+            scores.append(0)
+            continue
+*/
         if(total_matched == 0) {
             free(mult);
             continue;
         }
+/*
+        for m in mult:
+            score *= m
+        sumI = numpy.log10(sumI)
+*/
+
         for(int i = 0; i < n_series && cand->valid_series[i]; i++) {
             score *= mult[i]; 
         }
+/*
+        ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'match2': {k:v.tolist() for k, v in match2.items()}, 'match': {k:v.tolist() for k, v in match.items()}, 'sumI': sumI, 'dist': dist_all, 'total_matched': total_matched})
+        scores.append(score)
+*/
         r[j].score = score;
         r[j].sumI = (total_intens != 0)? log10(total_intens) : 0;
         r[j].total_matched = total_matched;
+
         free(mult);
     }
 
     free(indices);
     free(prev_inds);
+/*
+    return scores, ret
+*/
     return r;
 }
 
+//score_ret rnhs(query* q, void* cands, int n_cands, int npeaks, uint64_t elt_size, float tol) {
 void* alloc(uint64_t n) {
     return calloc(1, n);
 }
