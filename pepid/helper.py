@@ -65,22 +65,6 @@ def queries_to_c(q):
 
     return ctypes.cast(retptr, ctypes.c_void_p)
 
-def one_score_to_py_dummy(score, cands, q, n):
-    ret = {}
-    ret['distance'] = []
-    ret['mask'] = []
-    ret['theoretical'] = []
-    ret['spec'] = []
-    ret['sumI'] = score[n].sumI
-    ret['total_matched'] = score[n].total_matched
-    ret['score'] = score[n].score
-
-    ret['distance'] = [0]
-    ret['mask'] = [0]
-    ret['spec'] = q[n]['spec']
-    ret['theoretical'] = cands[n]['spec']
-    return ret
-
 def one_score_to_py(score, cands, q, n):
     max_charge = blackboard.config['search'].getint('max charge')
     ret = {}
@@ -130,7 +114,7 @@ def cands_to_c(cands, q_charges):
     for i in range(len(cands)):
         spec = cands[i]['spec'].data.astype('float32')
         ret[i].npeaks = ctypes.cast((ctypes.c_uint32 * len(spec)).from_buffer(array.array('I', [len(sp) for sp in spec])), ctypes.POINTER(ctypes.c_uint32))
-        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [k < (q_charges[i]-1)*2 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
+        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [0 if (k >= q_charges[i]*2) else 1 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
         specp = [0.0] * (len(spec) * max_peaks)
         for s in range(len(spec)):
             specp[s * max_peaks:s * max_peaks + len(spec[s])] = spec[s]
@@ -140,7 +124,7 @@ def cands_to_c(cands, q_charges):
 
 def rnhs(q, cands, tol, ppm, whole_data=True):
     qptr = queries_to_c(q)
-    ccands, _ = cands_to_c(cands, [qq['charge'] for qq in q])
+    ccands, _ = cands_to_c(cands, [qq['charge']-1 for qq in q]) # charge goes from 1 to prec_charge-1 inclusive
     data = ScoreData()
     data.q = qptr
     data.tol = tol

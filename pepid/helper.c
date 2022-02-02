@@ -761,16 +761,14 @@ void free_score(score_ret* score) {
     free(score);
 }
 
-double ppm_tol(float q, float tol) {
-    //return q * pow(10.0, -6.0) * tol;
-    //float fake = 2000.0 * 0.000001 * tol;
-    float real = q * 0.000001 * tol;
-    //return MIN(fake, real);
-    return real;
-}
-
 double ppm_dist(float q, float c) {
-   return ((q - c) / q) * 100000.0;
+    // implementation fail in identipy: they use a double KO criterion,
+    // the first of which is an absolute error, because they rely on the scipy kdtree implementation
+    // which requires a fixed upper-bound. This is reproduced here ONLY to prove comparison to identipy,
+    // and should be removed when possible.
+    float fake = ((q - c) / 2000.0) * 100000.0;
+    float real = ((q - c) / q) * 100000.0;
+    return MAX(fake, real);
 }
 
 /*
@@ -867,7 +865,7 @@ score_ret* rnhs(score_data d) {
                 mask2[nacc] = False
             else:
                 mask2 = mask1
-            nmatched = mask2.sum()
+            nmatched = mask2.sum() // sum of: 1 if this query peak matched any theoretical peak, else 0
 */
             int candpeaks = cand->npeaks[s];
             int prev_ind = 0;
@@ -879,20 +877,23 @@ score_ret* rnhs(score_data d) {
                     double this_dist = ppm? ppm_dist(q->spec[k*2+0], cand->spec[s*npeaks+i]) : (q->spec[k*2+0] - cand->spec[s*npeaks+i]);
                     double abs_dist = ABS(this_dist);
 
-                    if(abs_dist <= tol) {
-                        if((r[j].distances[s * npeaks + k] < 0) || (abs_dist < r->distances[s * npeaks + k])) {
+                    if((abs_dist > tol) && (this_dist > 0)) {
+                        prev_ind = i;
+                    } else if(abs_dist <= tol) {
+                        if((r[j].distances[s * npeaks + k] < 0) || (abs_dist < r[j].distances[s * npeaks + k])) {
                             r[j].distances[s * npeaks + k] = abs_dist;
                             indices[s * npeaks * n_cands + j * npeaks + k] = i;
-                            nmatched++;
-                            intens_sum += q->spec[k*2+1];
-                            r[j].mask[k + s * npeaks] = 1;
-                            prev_ind = i;
                         }
                     } else if(this_dist < 0) {
                         // outside tol and higher m/z than current spec peak, impossible to find a better match
-                        prev_ind--;
                         break;
                     }
+                }
+
+                if(r[j].distances[s * npeaks + k] > -1) {
+                    intens_sum += q->spec[k*2+1];
+                    r[j].mask[s * npeaks + k] = 1;
+                    nmatched++;
                 }
             }
 
@@ -924,6 +925,7 @@ score_ret* rnhs(score_data d) {
             continue
 */
         if(total_matched == 0) {
+            r[j].score = 0;
             free(mult);
             continue;
         }
@@ -940,6 +942,7 @@ score_ret* rnhs(score_data d) {
         ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'match2': {k:v.tolist() for k, v in match2.items()}, 'match': {k:v.tolist() for k, v in match.items()}, 'sumI': sumI, 'dist': dist_all, 'total_matched': total_matched})
         scores.append(score)
 */
+        //r[j].score = score;
         r[j].score = score;
         r[j].sumI = (total_intens != 0)? log10(total_intens) : 0;
         r[j].total_matched = total_matched;

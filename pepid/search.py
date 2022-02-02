@@ -17,116 +17,110 @@ def crnhs(cands, queries, whole_data=True):
     ret = helper.rnhs(queries, cands, tol, ppm, whole_data)
     return ret
 
-def identipy_rnhs2(cands, query):
+def identipy_rnhs2(cands, q, whole_data=True):
     import scipy
     from scipy import spatial
     ret = []
-    scores = []
-
-    spectrum = query['spec'][:query['npeaks']]
-    norm = 0
-    mz_array = spectrum[:,:1]
-    intens = spectrum[:,1]
-    norm = intens.sum()
-    charge = query['charge']
-    qmass = query['mass']
-
-    nterm = blackboard.config['search'].getfloat('nterm cleavage')
-    cterm = blackboard.config['search'].getfloat('cterm cleavage')
-    #tree = scipy.spatial.cKDTree(mz_array)
-    #import faiss
-    #tree = faiss.IndexFlatL2(1)
-    #tree.add(numpy.ascontiguousarray(mz_array))
-    import sklearn
-    import sklearn.neighbors
-    #tree = sklearn.neighbors.KDTree(mz_array, leaf_size=16)
-
-    acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
-    acc = blackboard.config['search'].getfloat('peak matching tolerance')
-
-    upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
-    #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
     theoreticals = []
-    seqs = []
-    seq_masses = []
-    query_peaks = blackboard.config['search'].getint('max peaks')
-    for i in range(cands[1]):
-        c = cands[0][i]
-        theoreticals.append(numpy.ndarray(buffer=c.spec, dtype='float32', shape=(query_peaks, 2))[:,:1])
-        seqs.append(c.sequence.decode('ascii'))
-        seq_masses.append(c.mass)
-    theoreticals = numpy.asarray(theoreticals).reshape((-1, 1))
-    tree = sklearn.neighbors.KDTree(theoreticals)
-    dists = []
-    inds = []
-    dists, inds = tree.query(mz_array, k=1, sort_results=False, dualtree=False)
-    dists = dists.reshape((cands[1], -1))
 
-    for i in range(cands[1]):
-        cand = cands[0][i]
+    for i in range(len(cands)):
+        spectrum = numpy.asarray(q[i]['spec'].data[:blackboard.config['search'].getint('max peaks')])
+        mz_array = spectrum[:,:1]
+        intens = spectrum[:,1]
+        norm = intens.sum()
+        charge = q[i]['charge']
+        qmass = q[i]['mass']
+
+        nterm = blackboard.config['search'].getfloat('nterm cleavage')
+        cterm = blackboard.config['search'].getfloat('cterm cleavage')
+        #tree = scipy.spatial.cKDTree(mz_array)
+        #import faiss
+        #tree = faiss.IndexFlatL2(1)
+        #tree.add(numpy.ascontiguousarray(mz_array))
+        import sklearn
+        import sklearn.neighbors
+        #tree = sklearn.neighbors.KDTree(mz_array, leaf_size=16)
+
+        acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
+        acc = blackboard.config['search'].getfloat('peak matching tolerance')
+
+        upper_bound = acc if not acc_ppm else (float(acc) / 1e6 * 2000)
+        #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
+        query_peaks = blackboard.config['search'].getint('max peaks')
+        c = cands[i]
+        theoretical = c['spec'].data.astype('float32').reshape((-1, 1))
+        theoreticals.append(theoretical)
+        seqs = c['seq']
+        seq_mass = c['mass']
+        tree = sklearn.neighbors.KDTree(theoretical)
+        dist_raw, ind = tree.query(mz_array, k=1, sort_results=False, dualtree=False)
+
         #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
         #theoretical = numpy.ascontiguousarray(numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1]) # xxx: needs to be dict, etc.
-
-        seq = seqs[i]
-        seq_mass = seq_masses[i]
 
         score = 0
         mult = []
         total_matched = 0
         sumI = 0
 
-        dist = dists[i][:cand.npeaks]
-        ind = inds[i][:cand.npeaks]
-        ind = ind[dist < upper_bound]
-        dist = dist[dist < upper_bound]
+        ind = ind[dist_raw < upper_bound]
+        dist = dist_raw[dist_raw < upper_bound]
         nmatched = len(ind)
         if nmatched > 0:
             total_matched += nmatched
             mult.append(numpy.math.factorial(nmatched))
-            sumi = sum(intens[ind])
+            sumi = sum(intens[dist_raw[:,0] < upper_bound])
             sumI += sumi
             score += sumi / norm
         if not total_matched:
-            ret.append({})
-            scores.append(0)
+            ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': c['desc'], 'seq': None, 'modseq': None})
             continue
         for m in mult:
             score *= m
         if sumI != 0:
             sumI = numpy.log10(sumI)
 
-        ret.append({'score': score, 'theoretical': theoreticals[i].tolist(), 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched})
-        scores.append(score)
-    return scores, ret
+        ret.append({'score': score, 'theoretical': theoreticals[i].tolist(), 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
+    return ret
 
-def identipy_rnhs(cands, query):
+def identipy_rnhs(cands, q, whole_data=True):
     import scipy
     from scipy import spatial
     ret = []
     scores = []
 
-    spectrum = numpy.asarray(query['spec'])
-    mz_array = spectrum[:,0]
-    charge = query['charge']
-    qmass = query['mass']
+    for i in range(len(cands)):
+        #spectrum = numpy.asarray(q[i]['spec'].data[:blackboard.config['search'].getint('max peaks')])
+        spectrum = numpy.asarray(q[i]['spec'].data)
+        mz_array = spectrum[:,:1]
+        intens = spectrum[:,1]
+        norm = intens.sum()
+        charge = q[i]['charge']
+        qmass = q[i]['mass']
 
-    nterm = blackboard.config['search'].getfloat('nterm cleavage')
-    cterm = blackboard.config['search'].getfloat('cterm cleavage')
-    tree = scipy.spatial.cKDTree(mz_array.reshape((mz_array.size, 1)))
+        nterm = blackboard.config['search'].getfloat('nterm cleavage')
+        cterm = blackboard.config['search'].getfloat('cterm cleavage')
+        #tree = scipy.spatial.cKDTree(mz_array)
+        #import faiss
+        #tree = faiss.IndexFlatL2(1)
+        #tree.add(numpy.ascontiguousarray(mz_array))
+        import sklearn
+        import sklearn.neighbors
+        import scipy
+        import scipy.spatial
+        #tree = sklearn.neighbors.KDTree(mz_array, leaf_size=16)
 
-    norm = spectrum[:,1].sum()
+        acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
+        acc = blackboard.config['search'].getfloat('peak matching tolerance')
 
-    acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
-    acc = blackboard.config['search'].getfloat('peak matching tolerance')
-
-    for i in range(cands[1]):
-        cand = cands[0][i]
-        theoretical = numpy.zeros((cand.npeaks,)) # xxx: needs to be dict, etc.
-        for j in range(cand.npeaks):
-            theoretical[j] = cand.spec[j][0]
-
-        seq = cand.sequence.decode('ascii')
-        seq_mass = cand.mass
+        #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
+        query_peaks = blackboard.config['search'].getint('max peaks')
+        c = cands[i]
+        theoretical = c['spec'].data
+        seqs = c['seq']
+        seq_mass = c['mass']
+        #tree = sklearn.neighbors.KDTree(mz_array)
+        tree = scipy.spatial.cKDTree(mz_array)
 
         score = 0
         mult = []
@@ -136,8 +130,8 @@ def identipy_rnhs(cands, query):
         sumI = 0
 
         dist_all = []
-        for ion, fragments in theoretical.items():
-            if ion[-1] >= charge:
+        for ifrag, fragments in enumerate(theoretical):
+            if (ifrag // 2 + 1) >= charge:
                 break
             dist, ind = tree.query(fragments, distance_upper_bound=acc if not acc_ppm else (float(acc) / 1e6 * 2000))
             
@@ -152,23 +146,20 @@ def identipy_rnhs(cands, query):
             if nmatched:
                 total_matched += nmatched
                 mult.append(numpy.math.factorial(nmatched))
-                sumi = spectrum[:,1][ind[mask2]].sum()
+                sumi = intens[ind[mask2]].sum()
                 sumI += sumi
                 score += sumi / norm
                 dist_all.extend(dist[mask2])
-            match[ion] = mask2
-            match2[ion] = mask2
         if not total_matched:
-            ret.append(None)
-            scores.append(0)
+            ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': c['desc'], 'seq': None, 'modseq': None})
             continue
         for m in mult:
             score *= m
         sumI = numpy.log10(sumI)
 
-        ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'match2': {k:v.tolist() for k, v in match2.items()}, 'match': {k:v.tolist() for k, v in match.items()}, 'sumI': sumI, 'dist': dist_all, 'total_matched': total_matched})
-        scores.append(score)
-    return scores, ret
+        ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
+        #ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'match2': {k:v.tolist() for k, v in match2.items()}, 'match': {k:v.tolist() for k, v in match.items()}, 'sumI': sumI, 'dist': dist_all, 'total_matched': total_matched})
+    return ret
 
 def rnhs(cands, query):
     """

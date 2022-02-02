@@ -97,7 +97,6 @@ def theoretical_spectrum(cands):
 
     cterm = blackboard.config['search'].getfloat('cterm cleavage')
     nterm = blackboard.config['search'].getfloat('nterm cleavage')
-    max_peaks = blackboard.config['search'].getint('max peaks')
     max_charge = blackboard.config['search'].getint('max charge')
 
     ret = []
@@ -105,7 +104,7 @@ def theoretical_spectrum(cands):
     for cand in cands:
         seq = cand['seq']
         mod = cand['mods']
-        ret.append(pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge))
+        ret.append(pepid_utils.identipy_theoretical_masses(seq, mod, nterm, cterm, charge=max_charge))
 
     return ret
 
@@ -118,7 +117,6 @@ def user_processing(start, end):
 
     cur = blackboard.CONN.cursor()
     max_charge = blackboard.config['search'].getint('max charge')
-    max_peaks = blackboard.config['search'].getint('max peaks')
 
     rt_fn = pred_rt
     spec_fn = theoretical_spectrum

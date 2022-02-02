@@ -68,6 +68,27 @@ def theoretical_mass(seq, mods, nterm, cterm):
     ret = sum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)]) + nterm + cterm
     return ret
 
+def identipy_theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
+    import pyteomics
+    from pyteomics import electrochem
+
+    peptide = seq
+    nm = theoretical_mass(seq, mods, nterm, cterm)
+    peaks = []
+    pl = len(peptide) - 1
+    for c in range(1, charge + 1):
+        for ion_type in series:
+            nterminal = ion_type in 'abc'
+            maxmass = identipy_calc_ions_from_neutral_mass(peptide, nm, ion_type=ion_type, charge=c, cterm_mass=cterm, nterm_mass=nterm)
+            if nterminal:
+                marr = identipy_get_n_ions(peptide, mods, maxmass, pl, c)
+            else:
+                marr = identipy_get_c_ions(peptide, mods, maxmass, pl, c)
+
+            marr = numpy.asarray(marr)
+            peaks.append(marr.reshape((-1, 1)))
+    return peaks
+
 def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
     masses = []
     cterm_generators = {"y": y_series}
