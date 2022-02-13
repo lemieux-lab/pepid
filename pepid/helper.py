@@ -112,9 +112,9 @@ def cands_to_c(cands, q_charges):
     max_peaks = blackboard.config['search'].getint('max peaks')
     ret = (Db * len(cands))()
     for i in range(len(cands)):
-        spec = cands[i]['spec'].data.astype('float32')
+        spec = cands[i]['spec'].data
         ret[i].npeaks = ctypes.cast((ctypes.c_uint32 * len(spec)).from_buffer(array.array('I', [len(sp) for sp in spec])), ctypes.POINTER(ctypes.c_uint32))
-        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [0 if (k >= q_charges[i]*2) else 1 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
+        ret[i].valid_series = ctypes.cast((ctypes.c_char * (max_charge * 2)).from_buffer(array.array('b', [0 if ((k // 2 + 1) >= q_charges[i]) else 1 for k in range(len(spec))])), ctypes.POINTER(ctypes.c_char))
         specp = [0.0] * (len(spec) * max_peaks)
         for s in range(len(spec)):
             specp[s * max_peaks:s * max_peaks + len(spec[s])] = spec[s]
@@ -124,7 +124,7 @@ def cands_to_c(cands, q_charges):
 
 def rnhs(q, cands, tol, ppm, whole_data=True):
     qptr = queries_to_c(q)
-    ccands, _ = cands_to_c(cands, [qq['charge']-1 for qq in q]) # charge goes from 1 to prec_charge-1 inclusive
+    ccands, _ = cands_to_c(cands, [qq['charge'] for qq in q]) # charge goes from 1 to prec_charge-1 inclusive
     data = ScoreData()
     data.q = qptr
     data.tol = tol

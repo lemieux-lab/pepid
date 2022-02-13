@@ -83,6 +83,30 @@ def identipy_rnhs2(cands, q, whole_data=True):
         ret.append({'score': score, 'theoretical': theoreticals[i].tolist(), 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
     return ret
 
+class FakeTree(object):
+    def __init__(self, data):
+        self.data = data
+
+    def query(self, queries, distance_upper_bound):
+        dist = [float('inf')] * len(queries)
+        indices = [-1] * len(queries)
+
+        prev_ind = 0
+
+        for iq, q in enumerate(queries):
+            for i in range(prev_ind, len(self.data)):
+                d = self.data[i][0] - q[0]
+                absd = abs(d)
+                if absd <= distance_upper_bound:
+                    if absd < dist[iq]:
+                        dist[iq] = absd
+                        indices[iq] = i
+                elif d < 0:
+                    prev_ind = i
+                else:
+                    break
+        return numpy.array(dist), numpy.array(indices)
+
 def identipy_rnhs(cands, q, whole_data=True):
     import scipy
     from scipy import spatial
@@ -92,7 +116,7 @@ def identipy_rnhs(cands, q, whole_data=True):
     for i in range(len(cands)):
         #spectrum = numpy.asarray(q[i]['spec'].data[:blackboard.config['search'].getint('max peaks')])
         spectrum = numpy.asarray(q[i]['spec'].data)
-        mz_array = spectrum[:,:1]
+        mz_array = spectrum[:,0]
         intens = spectrum[:,1]
         norm = intens.sum()
         charge = q[i]['charge']
@@ -104,10 +128,8 @@ def identipy_rnhs(cands, q, whole_data=True):
         #import faiss
         #tree = faiss.IndexFlatL2(1)
         #tree.add(numpy.ascontiguousarray(mz_array))
-        import sklearn
-        import sklearn.neighbors
-        import scipy
-        import scipy.spatial
+        #import scipy
+        #import scipy.spatial
         #tree = sklearn.neighbors.KDTree(mz_array, leaf_size=16)
 
         acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
@@ -120,7 +142,8 @@ def identipy_rnhs(cands, q, whole_data=True):
         seqs = c['seq']
         seq_mass = c['mass']
         #tree = sklearn.neighbors.KDTree(mz_array)
-        tree = scipy.spatial.cKDTree(mz_array)
+        #tree = scipy.spatial.cKDTree(mz_array.reshape((-1, 1)))
+        tree = FakeTree(mz_array.reshape((-1, 1)))
 
         score = 0
         mult = []
@@ -129,28 +152,30 @@ def identipy_rnhs(cands, q, whole_data=True):
         total_matched = 0
         sumI = 0
 
-        dist_all = []
         for ifrag, fragments in enumerate(theoretical):
+            sumi = 0
+            nmatched = 0
+
             if (ifrag // 2 + 1) >= charge:
                 break
             dist, ind = tree.query(fragments, distance_upper_bound=acc if not acc_ppm else (float(acc) / 1e6 * 2000))
-            
-            mask1 = (dist != numpy.inf)
+
             if acc_ppm:
-                nacc = numpy.where(dist[mask1] / mz_array[ind[mask1]] * 1e6 > acc)[0]
-                mask2 = mask1.copy()
-                mask2[nacc] = False
+                for d, idx in zip(dist, ind):
+                    if (d != numpy.inf) and (d / mz_array[idx] * 1e6 <= acc):
+                        sumi += intens[idx]
+                        nmatched += 1
             else:
-                mask2 = mask1
-            nmatched = mask2.sum()
+                nmatched = (dist != numpy.inf).sum()
+                sumi = intens[dist != numpy.inf].sum()
+
             if nmatched:
                 total_matched += nmatched
                 mult.append(numpy.math.factorial(nmatched))
-                sumi = intens[ind[mask2]].sum()
                 sumI += sumi
                 score += sumi / norm
-                dist_all.extend(dist[mask2])
-        if not total_matched:
+
+        if total_matched == 0:
             ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': c['desc'], 'seq': None, 'modseq': None})
             continue
         for m in mult:
@@ -158,7 +183,6 @@ def identipy_rnhs(cands, q, whole_data=True):
         sumI = numpy.log10(sumI)
 
         ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
-        #ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'match2': {k:v.tolist() for k, v in match2.items()}, 'match': {k:v.tolist() for k, v in match.items()}, 'sumI': sumI, 'dist': dist_all, 'total_matched': total_matched})
     return ret
 
 def rnhs(cands, query):
@@ -300,16 +324,12 @@ def search_core(start, end):
 
             all_q = [q] * len(cands)
 
-            #import sys
-            #sys.stderr.write("{} {} {}\n".format(len(cands), len(all_q), True))
             res = scoring_fn(cands, all_q, whole_data=True)
             #sys.stderr.write("GOT SCORE!!\n")
             #import sys
             r = [{'data': b'', 'candrow': c['rowid'], 'qrow': q['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
-            #sys.stderr.write("INSERT SCORE...\n")
             blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), r)
             blackboard.RES_CONN.commit()
-            #sys.stderr.write("DONE SCORE!\n")
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_qrow_idx ON results (qrow ASC, score DESC);")
     blackboard.RES_CONN.commit()
 

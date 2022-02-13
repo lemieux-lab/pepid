@@ -86,7 +86,7 @@ def identipy_theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
                 marr = identipy_get_c_ions(peptide, mods, maxmass, pl, c)
 
             marr = numpy.asarray(marr)
-            peaks.append(marr.reshape((-1, 1)))
+            peaks.append(marr[::-1].reshape((-1, 1)))
     return peaks
 
 def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):

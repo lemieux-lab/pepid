@@ -15,7 +15,7 @@ def tda_fdr():
     f = open(f, 'r')
     for li, l in enumerate(f):
         if li > 0:
-            title, desc, seq, modseq, cmass, mass, charge, score = l.split(",")
+            title, desc, seq, modseq, cmass, mass, charge, score = l.split("\t")
             data.append([title, float(score), desc.startswith(decoy_prefix)])
 
     data = numpy.array(data, dtype=[('title', numpy.unicode_, 1), ('score', numpy.float32, (1,)), ('decoy', numpy.boolean, (1,))])

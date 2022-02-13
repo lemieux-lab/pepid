@@ -74,10 +74,8 @@ def fill_queries(start, end):
                     
             elif '0' <= l[0] <= '9':
                 mz, intens = l.split(maxsplit=1)
-                mz = float(mz)
-                if mz > 100:
-                    mz_arr.append(mz)
-                    intens_arr.append(float(intens))
+                mz_arr.append(float(mz))
+                intens_arr.append(float(intens))
     cur = blackboard.CONN.cursor()
     blackboard.executemany(cur, blackboard.insert_dict_str("queries", blackboard.QUERY_COLS), data)
     cur.close()

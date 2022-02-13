@@ -766,9 +766,10 @@ double ppm_dist(float q, float c) {
     // the first of which is an absolute error, because they rely on the scipy kdtree implementation
     // which requires a fixed upper-bound. This is reproduced here ONLY to prove comparison to identipy,
     // and should be removed when possible.
-    float fake = ((q - c) / 2000.0) * 100000.0;
-    float real = ((q - c) / q) * 100000.0;
-    return MAX(fake, real);
+    float fake = ((q - c) / 2000.0) * 1000000.0;
+    float real = ((q - c) / q) * 1000000.0;
+    //return MAX(fake, real);
+    return real;
 }
 
 /*
@@ -877,14 +878,14 @@ score_ret* rnhs(score_data d) {
                     double this_dist = ppm? ppm_dist(q->spec[k*2+0], cand->spec[s*npeaks+i]) : (q->spec[k*2+0] - cand->spec[s*npeaks+i]);
                     double abs_dist = ABS(this_dist);
 
-                    if((abs_dist > tol) && (this_dist > 0)) {
-                        prev_ind = i;
-                    } else if(abs_dist <= tol) {
+                    if(abs_dist <= tol) {
                         if((r[j].distances[s * npeaks + k] < 0) || (abs_dist < r[j].distances[s * npeaks + k])) {
                             r[j].distances[s * npeaks + k] = abs_dist;
                             indices[s * npeaks * n_cands + j * npeaks + k] = i;
                         }
-                    } else if(this_dist < 0) {
+                    } else if(this_dist > 0) {
+                        prev_ind = i;
+                    } else {
                         // outside tol and higher m/z than current spec peak, impossible to find a better match
                         break;
                     }

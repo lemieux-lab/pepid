@@ -82,14 +82,14 @@ def identipy_theoretical_spectrum(cands, n):
     ret = []
 
     for i in range(len(cands)):
-        seq = cands[i]['sequence']
+        seq = cands[i]['seq']
         mod = cands[i]['mods']
         th_masses = pepid_utils.identipy_theor_spectrum(seq, mod, nterm, cterm)
         ret.append(th_masses)
 
     return ret
 
-def theoretical_spectrum(cands):
+def theoretical_spectrum(cands): # NOTE: MUST return sorted peak lists!
     """
     Spectrum prediction function generating b- and y-series ions
     with charged variants
@@ -104,7 +104,8 @@ def theoretical_spectrum(cands):
     for cand in cands:
         seq = cand['seq']
         mod = cand['mods']
-        ret.append(pepid_utils.identipy_theoretical_masses(seq, mod, nterm, cterm, charge=max_charge))
+        masses = pepid_utils.identipy_theoretical_masses(seq, mod, nterm, cterm, charge=max_charge)
+        ret.append(masses)
 
     return ret
 
