@@ -86,7 +86,7 @@ def identipy_theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
                 marr = identipy_get_c_ions(peptide, mods, maxmass, pl, c)
 
             marr = numpy.asarray(marr)
-            peaks.append(marr[::-1].reshape((-1, 1)))
+            peaks.append(marr.reshape((-1, 1)))
     return peaks
 
 def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
@@ -96,12 +96,11 @@ def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
     for z in range(1, charge+1):
         for s in series:
             if s in "xyz":
-                masses.append(cterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z))
+                masses.append(cterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z).reshape((-1, 1)))
             elif s in "abc":
-                masses.append(nterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z))
+                masses.append(nterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z).reshape((-1, 1)))
             else:
                 raise ValueError("Series '{}' not supported, available series are {}".format(s, list(cterm_generators.keys()) + list(nterm_generators.keys())))
-    masses = numpy.vstack(masses)
     return masses
 
 def identipy_get_n_ions(peptide, mods, maxmass, pl, charge):

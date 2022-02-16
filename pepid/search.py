@@ -83,15 +83,43 @@ def identipy_rnhs2(cands, q, whole_data=True):
         ret.append({'score': score, 'theoretical': theoreticals[i].tolist(), 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
     return ret
 
+def binary_search(q, lst):
+    low = 0
+    high = len(lst) - 1
+    ptr = 0
+
+    best_idx = ptr
+    best = 9999
+
+    while high >= low:
+        ptr = (high + low) // 2
+        if lst[ptr][0] > q:
+            high = ptr - 1
+            dist = abs(lst[ptr][0] - q)
+            if dist < best:
+                best = dist
+                best_idx = ptr
+        elif lst[ptr][0] < q:
+            low = ptr + 1
+            dist = abs(lst[ptr][0] - q)
+            if dist < best:
+                best = dist
+                best_idx = ptr
+        else:
+            best_idx = ptr
+            break
+    return best_idx
+    
+
 class FakeTree(object):
     def __init__(self, data):
         self.data = data
 
-    def query(self, queries, distance_upper_bound):
+    def query_bin0(self, queries, distance_upper_bound):
         dist = [float('inf')] * len(queries)
         indices = [-1] * len(queries)
 
-        prev_ind = 0
+        prev_ind = binary_search(queries[0][0], self.data)
 
         for iq, q in enumerate(queries):
             for i in range(prev_ind, len(self.data)):
@@ -107,6 +135,47 @@ class FakeTree(object):
                     break
         return numpy.array(dist), numpy.array(indices)
 
+    def query_bin(self, queries, distance_upper_bound):
+        dist = [float('inf')] * len(queries)
+        indices = [-1] * len(queries)
+
+        i = 0
+
+        start = binary_search(self.data[0][0], queries)
+        end = binary_search(self.data[-1][0], queries)
+        for iq in range(start, end+1):
+            i += binary_search(queries[iq][0], self.data[i:])
+            d = self.data[i][0] - queries[iq][0]
+            absd = abs(d)
+            if absd <= distance_upper_bound:
+                if absd < dist[iq]:
+                    dist[iq] = absd
+                    indices[iq] = i
+            iq += 1
+        return numpy.array(dist), numpy.array(indices)
+
+    def query_tree(self, queries, distance_upper_bound):
+        import scipy
+        from scipy import spatial
+        tree = scipy.spatial.cKDTree(self.data)
+        return tree.query(queries, distance_upper_bound=distance_upper_bound)
+
+    def query_npy(self, queries, distance_upper_bound):
+        qblock = numpy.repeat(queries, len(self.data), axis=1)
+        cblock = numpy.repeat(self.data.T, len(queries), axis=0)
+
+        dblock = numpy.abs(qblock - cblock)
+        ind = dblock.argmin(axis=1)
+        dist = dblock.min(axis=1)
+        mask = dist > distance_upper_bound
+        ind[mask] = -1
+        dist[mask] = numpy.inf
+        
+        return dist, ind
+
+    def query(self, queries, distance_upper_bound):
+        return self.query_npy(queries, distance_upper_bound)
+
 def identipy_rnhs(cands, q, whole_data=True):
     import scipy
     from scipy import spatial
@@ -114,7 +183,6 @@ def identipy_rnhs(cands, q, whole_data=True):
     scores = []
 
     for i in range(len(cands)):
-        #spectrum = numpy.asarray(q[i]['spec'].data[:blackboard.config['search'].getint('max peaks')])
         spectrum = numpy.asarray(q[i]['spec'].data)
         mz_array = spectrum[:,0]
         intens = spectrum[:,1]
@@ -124,26 +192,15 @@ def identipy_rnhs(cands, q, whole_data=True):
 
         nterm = blackboard.config['search'].getfloat('nterm cleavage')
         cterm = blackboard.config['search'].getfloat('cterm cleavage')
-        #tree = scipy.spatial.cKDTree(mz_array)
-        #import faiss
-        #tree = faiss.IndexFlatL2(1)
-        #tree.add(numpy.ascontiguousarray(mz_array))
-        #import scipy
-        #import scipy.spatial
-        #tree = sklearn.neighbors.KDTree(mz_array, leaf_size=16)
 
         acc_ppm = blackboard.config['search']['matching unit'] == 'ppm'
         acc = blackboard.config['search'].getfloat('peak matching tolerance')
 
-        #theoretical = numpy.ndarray(buffer=cand.spec, dtype='float32', shape=(cand.npeaks,2))[:,:1] # xxx: needs to be dict, etc.
         query_peaks = blackboard.config['search'].getint('max peaks')
         c = cands[i]
         theoretical = c['spec'].data
         seqs = c['seq']
         seq_mass = c['mass']
-        #tree = sklearn.neighbors.KDTree(mz_array)
-        #tree = scipy.spatial.cKDTree(mz_array.reshape((-1, 1)))
-        tree = FakeTree(mz_array.reshape((-1, 1)))
 
         score = 0
         mult = []
@@ -153,23 +210,25 @@ def identipy_rnhs(cands, q, whole_data=True):
         sumI = 0
 
         for ifrag, fragments in enumerate(theoretical):
+            qblock = numpy.repeat(mz_array.reshape((-1, 1)), len(fragments), axis=1)
+
             sumi = 0
             nmatched = 0
 
             if (ifrag // 2 + 1) >= charge:
                 break
-            dist, ind = tree.query(fragments, distance_upper_bound=acc if not acc_ppm else (float(acc) / 1e6 * 2000))
 
-            if acc_ppm:
-                for d, idx in zip(dist, ind):
-                    if (d != numpy.inf) and (d / mz_array[idx] * 1e6 <= acc):
-                        sumi += intens[idx]
-                        nmatched += 1
-            else:
-                nmatched = (dist != numpy.inf).sum()
-                sumi = intens[dist != numpy.inf].sum()
+            cblock = numpy.repeat(fragments.T, len(mz_array), axis=0)
 
-            if nmatched:
+            dblock = numpy.abs(qblock - cblock)
+
+            dist = dblock.min(axis=1)
+
+            mask = (dist <= acc) if not acc_ppm else (dist / mz_array * 1e6 <= acc)
+            sumi += intens[mask].sum()
+            nmatched += mask.sum()
+
+            if nmatched > 0:
                 total_matched += nmatched
                 mult.append(numpy.math.factorial(nmatched))
                 sumI += sumi
@@ -178,6 +237,7 @@ def identipy_rnhs(cands, q, whole_data=True):
         if total_matched == 0:
             ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': c['desc'], 'seq': None, 'modseq': None})
             continue
+
         for m in mult:
             score *= m
         sumI = numpy.log10(sumI)

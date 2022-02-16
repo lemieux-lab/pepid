@@ -104,7 +104,7 @@ def theoretical_spectrum(cands): # NOTE: MUST return sorted peak lists!
     for cand in cands:
         seq = cand['seq']
         mod = cand['mods']
-        masses = pepid_utils.identipy_theoretical_masses(seq, mod, nterm, cterm, charge=max_charge)
+        masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge)
         ret.append(masses)
 
     return ret
