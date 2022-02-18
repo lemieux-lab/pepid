@@ -5,14 +5,15 @@ import numpy
 import tqdm
 import queries
 import sys
+import sqlite3
 
 def write_output():
     """
     Exports search results to csv format as per the config settings.
     """
 
-    max_cands = blackboard.config['search'].getint('max retained candidates')
-    batch_size = blackboard.config['performance'].getint('batch size')
+    max_cands = blackboard.config['output'].getint('max retained candidates')
+    batch_size = blackboard.config['output'].getint('batch size')
 
     out_fname = blackboard.config['data']['output']
     outf = open(out_fname, 'w')
@@ -21,20 +22,15 @@ def write_output():
 
     outf.write("\t".join(header) + "\n")
 
-    n_cands = blackboard.config['search'].getint('max retained candidates')
     n_queries = queries.count_queries()
 
-    #cur = blackboard.CONN.cursor()
     import glob
     fname_pattern = list(filter(lambda x: len(x) > 0, blackboard.config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_*_pepidpart.sqlite"
     fname_path = os.path.join(blackboard.TMP_PATH, fname_pattern)
 
     files = glob.glob(fname_path)
-    #blackboard.execute(cur, "SELECT {} FROM results as r1 WHERE r1.rowid IN (SELECT r2.rowid FROM results AS r2 WHERE r1.title = r2.title ORDER BY r2.score DESC LIMIT ?) ORDER BY title ASC, score DESC;".format(",".join(blackboard.RES_COLS)), (n_cands,))
 
     for f in tqdm.tqdm(files, total=len(files), desc="Dumping To CSV"):
-        import sqlite3
-        import time
         while True:
             try:
                 conn = sqlite3.connect("file:{}?cache=shared".format(f), detect_types=1, uri=True, timeout=0.1)
@@ -48,8 +44,8 @@ def write_output():
         blackboard.execute(cur, "PRAGMA synchronous=OFF;")
         blackboard.execute(cur, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
 
-        blackboard.execute(cur, "SELECT results.rowid, {} FROM results JOIN (SELECT qrow, IFNULL((SELECT score FROM results WHERE qrow = qrows.qrow ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT qrow FROM results) AS qrows) AS cutoffs ON results.qrow = cutoffs.qrow AND results.score >= cutoffs.cutoff_score ORDER BY results.title ASC, results.score DESC;".format(",".join(map(lambda x: "results." + x, header[:-1]))), (n_cands-1,))
-        fetch_batch_size = min(batch_size, 62000)
+        blackboard.execute(cur, "SELECT results.rowid, {} FROM results JOIN (SELECT qrow, IFNULL((SELECT score FROM results WHERE qrow = qrows.qrow ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT qrow FROM results) AS qrows) AS cutoffs ON results.qrow = cutoffs.qrow AND results.score >= cutoffs.cutoff_score ORDER BY results.title ASC, results.score DESC;".format(",".join(map(lambda x: "results." + x, header[:-1]))), (max_cands-1,))
+        fetch_batch_size = min(batch_size, 62000) # The maximum batch size supported by the default sqlite engine is a bit more than 62000
         while True:
             results = cur.fetchmany(fetch_batch_size)
             if len(results) == 0:

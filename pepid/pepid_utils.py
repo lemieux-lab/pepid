@@ -54,91 +54,11 @@ def y_series(seq, mods, cterm, nterm, z=1):
     series = (numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq[::-1], mods[::-1])]) + nterm + cterm + (MASS_H * z)) / z
     return series
 
-def filter_by_mass(candidates, mass, tol, tol_ppm):
-    if tol_ppm:
-        dist = calc_rev_ppm(tol, mass)
-        left = numpy.searchsorted(candidates['mass'], mass - dist, side='left')
-        right = numpy.searchsorted(candidates['mass'], mass + dist, side='right') + 1
-    else:
-        left = numpy.searchsorted(candidates['mass'], mass - tol, side='left')
-        right = numpy.searchsorted(candidates['mass'], mass + tol, side='right') + 1
-    return left, right
-
 def theoretical_mass(seq, mods, nterm, cterm):
     ret = sum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)]) + nterm + cterm
     return ret
 
-def identipy_theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
-    import pyteomics
-    from pyteomics import electrochem
-
-    peptide = seq
-    nm = theoretical_mass(seq, mods, nterm, cterm)
-    peaks = []
-    pl = len(peptide) - 1
-    for c in range(1, charge + 1):
-        for ion_type in series:
-            nterminal = ion_type in 'abc'
-            maxmass = identipy_calc_ions_from_neutral_mass(peptide, nm, ion_type=ion_type, charge=c, cterm_mass=cterm, nterm_mass=nterm)
-            if nterminal:
-                marr = identipy_get_n_ions(peptide, mods, maxmass, pl, c)
-            else:
-                marr = identipy_get_c_ions(peptide, mods, maxmass, pl, c)
-
-            marr = numpy.asarray(marr)
-            peaks.append(marr.reshape((-1, 1)))
-    return peaks
-
-def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
-    masses = []
-    cterm_generators = {"y": y_series}
-    nterm_generators = {"b": b_series}
-    for z in range(1, charge+1):
-        for s in series:
-            if s in "xyz":
-                masses.append(cterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z).reshape((-1, 1)))
-            elif s in "abc":
-                masses.append(nterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z).reshape((-1, 1)))
-            else:
-                raise ValueError("Series '{}' not supported, available series are {}".format(s, list(cterm_generators.keys()) + list(nterm_generators.keys())))
-    return masses
-
-def identipy_get_n_ions(peptide, mods, maxmass, pl, charge):
-    tmp = [maxmass, ]
-    for i in range(1, pl):
-        tmp.append(tmp[-1] - (MASSES[AMINOS.index(peptide[-i-1])] + mods[-i-1])/charge)
-    return tmp
-
-def identipy_get_c_ions(peptide, mods, maxmass, pl, charge):
-    tmp = [maxmass, ]
-    for i in range(pl-2, -1, -1):
-        tmp.append(tmp[-1] - (MASSES[AMINOS.index(peptide[-(i+2)])] + mods[-(i+2)])/charge)
-    return tmp
-
-def identipy_theor_spectrum(seq, mods, nterm_mass, cterm_mass, types=['b', 'y'], maxcharge=None):
-    import pyteomics
-    from pyteomics import electrochem
-
-    peptide = seq
-    if not maxcharge:
-        maxcharge = 1 + int(pyteomics.electrochem.charge(peptide, pH=2))
-    nm = theoretical_mass(seq, mods, nterm_mass, cterm_mass)
-    peaks = {}
-    pl = len(peptide) - 1
-    for charge in range(1, maxcharge + 1):
-        for ion_type in types:
-            nterminal = ion_type in 'abc'
-            maxmass = identipy_calc_ions_from_neutral_mass(peptide, nm, ion_type=ion_type, charge=charge, cterm_mass=cterm_mass, nterm_mass=nterm_mass)
-            if nterminal:
-                marr = identipy_get_n_ions(peptide, mods, maxmass, pl, charge)
-            else:
-                marr = identipy_get_c_ions(peptide, mods, maxmass, pl, charge)
-
-            marr = numpy.asarray(marr)
-            peaks[(ion_type, charge)] = marr.reshape((marr.shape[0], 1)).tolist()
-    return peaks
-
-identipy_ion_shift_dict = {
+ion_shift = {
     'a': 46.00547930326002,
     'b': 18.010564683699954,
     'c': 0.984015582689949,
@@ -147,9 +67,27 @@ identipy_ion_shift_dict = {
     'z': 17.026549101010005,
 }
 
-def identipy_calc_ions_from_neutral_mass(peptide, nm, ion_type, charge, cterm_mass, nterm_mass):
-    if ion_type in 'abc':
-        nmi = nm - MASSES[AMINOS.index(peptide[-1])] - identipy_ion_shift_dict[ion_type] - (cterm_mass - 17.002735)
-    else:
-        nmi = nm - MASSES[AMINOS.index(peptide[0])] - identipy_ion_shift_dict[ion_type] - (nterm_mass - 1.007825)
-    return (nmi + 1.0072764667700085 * charge) / charge 
+def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
+    masses = []
+    cterm_generators = {"y": y_series, "x": y_series, "z": y_series}
+    nterm_generators = {"b": b_series, "a": b_series, "c": b_series}
+    for z in range(1, charge+1):
+        for s in series:
+            if s in "xyz":
+                masses.append(cterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z).reshape((-1, 1)) - (ion_shift[s] - ion_shift['y']) / z)
+            elif s in "abc":
+                masses.append(nterm_generators[s](seq, mods, nterm=nterm, cterm=cterm, z=z).reshape((-1, 1)) - (ion_shift[s] - ion_shift['b']) / z)
+            else:
+                raise ValueError("Series '{}' not supported, available series are {}".format(s, list(cterm_generators.keys()) + list(nterm_generators.keys())))
+    return masses
+
+def import_or(s, default):
+    try:
+        mod, fn = s.rsplit(':', 1)
+        return getattr(__import__(mod, fromlist=[fn]), fn)
+    except:
+        import sys
+        sys.stderr.write("Could not find '{}', using default value instead\n".format(s))
+        return default
+
+

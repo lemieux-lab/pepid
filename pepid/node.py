@@ -46,14 +46,10 @@ class Node():
                     except Exception as e:
                         err = "Failed to handle message {} -- {}".format(msg[0], repr(e)) 
                         conn.sendall(struct.pack("!cI{}sc".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8'), "$".encode('utf-8')))
-                        import sys
-                        sys.stderr.write("NODE: Got error {}\n".format(repr(e)))
-                        traceback.print_tb(e.__traceback__)
+                        #traceback.print_tb(e.__traceback__)
                 else:
                     err = "Unknown message code received: {}".format(msg[0])
                     conn.sendall(struct.pack("!cI{}s".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8')))
-                    import sys
-                    sys.stderr.write("NODE: Got wrong code {}\n".format(msg[0]))
 
         blackboard.CONN.close()
         conn.close()

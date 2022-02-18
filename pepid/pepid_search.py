@@ -203,58 +203,56 @@ def run():
     import search
 
     try:
-        log.info("Phases to run: | " + ("Query Processing | " if blackboard.config['pipeline'].getboolean('query processing') else "") +
-                                    ("DB Processing | " if blackboard.config['pipeline'].getboolean('db processing') else "") +
-                                    ("Postprocessing | " if blackboard.config['pipeline'].getboolean('postprocessing') else "") +
-                                    ("Score | " if blackboard.config['pipeline'].getboolean('score') else "") +
-                                    ("Search Postprocessing | " if blackboard.config['pipeline'].getboolean("postprocess search") else "") +
-                                    ("Output CSV | " if blackboard.config['pipeline'].getboolean('output csv') else ""))
+        log.info("Phases to run: | " + ("Query Processing | " if blackboard.config['processing.query'].getboolean('enabled') else "") +
+                                    ("DB Processing | " if blackboard.config['processing.db'].getboolean('enabled') else "") +
+                                    ("Postprocessing | " if blackboard.config['postprocessing'].getboolean('enabled') else "") +
+                                    ("Score | " if blackboard.config['scoring'].getboolean('enabled') else "") +
+                                    ("Output TSV | " if blackboard.config['output'].getboolean('enabled') else ""))
         log.info("Preparing Input Databases...")
         db_paths = []
-        if blackboard.config['pipeline'].getboolean('query processing'):
+        if blackboard.config['processing.query'].getboolean('enabled'):
             db_paths.append(blackboard.DB_PATH + "_q.sqlite")
-        if blackboard.config['pipeline'].getboolean('db processing'):
+        if blackboard.config['processing.db'].getboolean('enabled'):
             db_paths.append(blackboard.DB_PATH + "_cands.sqlite")
-        if blackboard.config['pipeline'].getboolean('score'):
+        if blackboard.config['scoring'].getboolean('enabled'):
             db_paths.append(blackboard.DB_PATH + ".sqlite")
         for p in db_paths:
             if os.path.exists(p):
                 os.remove(p)
         blackboard.prepare_connection()
-        if blackboard.config['pipeline'].getboolean('query processing'):
+        if blackboard.config['processing.query'].getboolean('enabled'):
             queries.prepare_db()
-        if blackboard.config['pipeline'].getboolean('db processing'):
+        if blackboard.config['processing.db'].getboolean('enabled'):
             db.prepare_db()
         blackboard.init_results_db()
 
-        if blackboard.config['pipeline'].getboolean('score'):
+        if blackboard.config['scoring'].getboolean('enabled'):
             log.info("Preparing Input Processing Nodes...")
             
-            qnodes = blackboard.config['performance'].getint('query nodes')
-            dbnodes = blackboard.config['performance'].getint('db nodes')
-            snodes = blackboard.config['performance'].getint('search nodes')
+            qnodes = blackboard.config['processing.query'].getint('workers')
+            dbnodes = blackboard.config['processing.db'].getint('workers')
+            snodes = blackboard.config['scoring'].getint('workers')
 
             if qnodes < 0 or dbnodes < 0 or snodes < 0:
                 log.fatal("node settings are query={}, db={}, search={}, but only values 0 or above allowed.".format(qnodes, dbnodes, snodes))
                 sys.exit(2)
 
-            batch_size = blackboard.config['performance'].getint('batch size')
             base_path = blackboard.TMP_PATH
 
             proc_spec = []
 
-            if blackboard.config['pipeline'].getboolean('db processing'):
+            if blackboard.config['processing.db'].getboolean('enabled'):
                 n_db = db.count_db()
-                n_db_batches = math.ceil(n_db / batch_size)
+                n_db_batches = math.ceil(n_db / blackboard.config['processing.db'].getint('batch size'))
                 dbspec = [("db_node.py", dbnodes, n_db_batches,
                                             [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
                                             [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
                                             [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
                 proc_spec = proc_spec + dbspec
 
-            if blackboard.config['pipeline'].getboolean('query processing'):
+            if blackboard.config['processing.query'].getboolean('enabled'):
                 n_queries = queries.count_queries()
-                n_query_batches = math.ceil(n_queries / batch_size)
+                n_query_batches = math.ceil(n_queries / blackboard.config['processing.query'].getint('batch size'))
         
                 qspec = [("queries_node.py", qnodes, n_query_batches,
                                 [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
@@ -266,15 +264,15 @@ def run():
             if len(proc_spec) != 0:
                 handle_nodes("Input Processing", proc_spec)
 
-        if blackboard.config['pipeline'].getboolean('postprocessing'):
+        if blackboard.config['postprocessing'].getboolean('enabled'):
             idx = 0
 
-            qnodes = blackboard.config['performance'].getint('post query nodes')
-            dbnodes = blackboard.config['performance'].getint('post db nodes')
+            qnodes = blackboard.config['processing.query'].getint('postprocessing workers')
+            dbnodes = blackboard.config['processing.db'].getint('postprocessing workers')
 
             batch_start = 0
             n_db = db.count_peps()
-            n_db_batches = math.ceil(n_db / batch_size)
+            n_db_batches = math.ceil(n_db / blackboard.config['processing.db'].getint('batch size'))
 
             if qnodes < 0 or dbnodes < 0:
                 log.fatal("post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
@@ -295,7 +293,7 @@ def run():
         blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
         del cur
 
-        if blackboard.config['pipeline'].getboolean('score'):
+        if blackboard.config['scoring'].getboolean('enabled'):
             n_search_batches = math.ceil(n_queries / batch_size)
             sspec = [("search_node.py", snodes, n_search_batches,
                             [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
@@ -320,11 +318,8 @@ def run():
             #    os.remove(f)
             del cur
 
-        if blackboard.config['pipeline'].getboolean('postprocess search'):
-            log.info("Search complete. Post-processing results...")
-            processing.post_process()
         log.info("Done.")
-        if blackboard.config['pipeline'].getboolean('output csv'):
+        if blackboard.config['output'].getboolean('enabled'):
             log.info("Saving results to {}...".format(blackboard.config['data']['output']))
             #os.system("sqlite3 -header -csv \"{}\" \"SELECT results.rowid, {} FROM results JOIN (SELECT title, IFNULL((SELECT score FROM results WHERE title = titles.title AND score > 0 ORDER BY score DESC LIMIT 1 OFFSET {}), -1) AS cutoff_score FROM (SELECT DISTINCT title FROM results) AS titles) AS cutoffs ON results.title = cutoffs.title AND results.score >= cutoffs.cutoff_score;\" > \"{}\"".format(blackboard.RES_DB_PATH, ",".join(map(lambda x: "results." + x, blackboard.RES_COLS[:-1])), blackboard.config['search'].getint('max retained candidates') - 1, blackboard.config['data']['output']))
             pepid_io.write_output()

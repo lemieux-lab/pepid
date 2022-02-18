@@ -24,13 +24,13 @@ def fill_queries(start, end):
     
     f = open(blackboard.config['data']['queries'], 'r')
 
-    tol_l, tol_r = list(map(lambda x: float(x.strip()), blackboard.config['search']['candidate filtering tolerance'].split(",")))
-    is_ppm = blackboard.config['search']['filtering unit'] == "ppm"
+    tol_l, tol_r = list(map(lambda x: float(x.strip()), blackboard.config['scoring']['candidate filtering tolerance'].split(",")))
+    is_ppm = blackboard.config['scoring']['filtering unit'] == "ppm"
 
-    min_mass = blackboard.config['database'].getfloat('min mass')
-    max_mass = blackboard.config['database'].getfloat('max mass')
-    min_charge = blackboard.config['search'].getint('min charge')
-    max_charge = blackboard.config['search'].getint('max charge')
+    min_mass = blackboard.config['processing.query'].getfloat('min mass')
+    max_mass = blackboard.config['processing.query'].getfloat('max mass')
+    min_charge = blackboard.config['processing.query'].getint('min charge')
+    max_charge = blackboard.config['processing.query'].getint('max charge')
 
     data = []
 
@@ -100,14 +100,7 @@ def user_processing(start, end):
     in the sense of the user scoring function (metadata is not otherwise consulted).
     """
     
-    metadata_fn = None
-    try:
-        mod, fn = blackboard.config['queries']['user processing function'].rsplit('.', 1)
-        user_fn = getattr(__import__(mod, fromlist=[fn]), fn)
-        metadata_fn = user_fn
-    except:
-        import sys
-        sys.stderr.write("[queries post]: user processing function not found, not using extra processing\n")
+    metadata_fn = pepid_utils.import_or(blackboard.config['processing.query']['postprocessing function'], None)
 
     if metadata_fn is None:
         return

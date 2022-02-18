@@ -19,10 +19,10 @@ DB_FNAME = None
 RES_DB_FNAME = None
 DB_PATH = None
 RES_DB_PATH = None
-KEY_DATA_DTYPE = None
 LOCK = None
 TMP_PATH = None
 
+# Simple wrapper to hook into the sqlite3 auto-conversion system...
 class Spectrum(object):
     def __init__(self, x):
         self.data = x
@@ -69,9 +69,6 @@ def init_results_db(generate=False, base_dir=None):
             _CONN = sqlite3.connect("file:" + RES_DB_PATH + "?cache=shared", detect_types=1, uri=True, timeout=0.1)
             cur = _CONN.cursor()
             cur.execute("PRAGMA synchronous=OFF;")
-            #cur.execute("PRAGMA mmap_size=8589934560;") # 8GB/48 threads
-            #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
-            #cur.execute("PRAGMA cache_size=-1048576;") # negative value = multiples of page matching 1024 * -value as closely as possible
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             #cur.execute("PRAGMA journal_mode=WAL;")
@@ -143,13 +140,7 @@ def prepare_connection():
             import sys
             _CONN = sqlite3.connect("file:" + DB_PATH + ".sqlite?cache=shared", detect_types=1, uri=True, timeout=0.1)
             cur = _CONN.cursor()
-            #cur.execute("PRAGMA threads=4;")
             cur.execute("PRAGMA synchronous=OFF;")
-            #cur.execute("PRAGMA mmap_size=8589934560;") # 8GB/48 threads
-            #cur.execute("PRAGMA mmap_size=8589934592;") # 8GB
-            #cur.execute("PRAGMA page_size=1638400;") # 16KB ~= size of cand entry
-            #cur.execute("PRAGMA cache_size=100;")
-            #cur.execute("PRAGMA cache_size=-1048576;")
             #cur.execute("PRAGMA temp_store=MEMORY;")
             cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
             #cur.execute("PRAGMA journal_mode=WAL;")

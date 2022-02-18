@@ -17,26 +17,26 @@ class DbSettings():
         pass
 
     def load_settings(self):
-        self.digestion_pattern = blackboard.config['database']['digestion']
-        self.digestion_regex = re.compile("(^|(?<={0})).*?({0}|$)".format(blackboard.config['database']['digestion']))
-        self.cleaves = blackboard.config['database'].getint('max missed cleavages')
-        self.min_lgt = blackboard.config['database'].getint('min length')
-        self.max_lgt = blackboard.config['database'].getint('max length')
-        self.min_mass = blackboard.config['database'].getfloat('min mass')
-        self.max_mass = blackboard.config['database'].getfloat('max mass')
-        self.var_mods = blackboard.config['search']['variable modifications'].split(",")
+        self.digestion_pattern = blackboard.config['processing.db']['digestion']
+        self.digestion_regex = re.compile("(^|(?<={0})).*?({0}|$)".format(blackboard.config['processing.db']['digestion']))
+        self.cleaves = blackboard.config['processing.db'].getint('max missed cleavages')
+        self.min_lgt = blackboard.config['processing.db'].getint('min length')
+        self.max_lgt = blackboard.config['processing.db'].getint('max length')
+        self.min_mass = blackboard.config['processing.db'].getfloat('min mass')
+        self.max_mass = blackboard.config['processing.db'].getfloat('max mass')
+        self.var_mods = blackboard.config['processing.db']['variable modifications'].split(",")
         self.var_mods = [[x[0], float(x[1:])] for x in self.var_mods]
         self.var_mods = {k:[x[1] for x in self.var_mods if x[0] == k] for k in set(x[0] for x in self.var_mods)}
-        self.fixed_mods = blackboard.config['search']['fixed modifications'].split(",")
+        self.fixed_mods = blackboard.config['processing.db']['fixed modifications'].split(",")
         self.fixed_mods = [[x[0], float(x[1:])] for x in self.fixed_mods]
         self.fixed_mods = {k:[x[1] for x in self.fixed_mods if x[0] == k] for k in set(x[0] for x in self.fixed_mods)}
-        self.cterm = blackboard.config['search'].getfloat('cterm cleavage')
-        self.nterm = blackboard.config['search'].getfloat('nterm cleavage')
-        self.max_vars = blackboard.config['search'].getint('max variable modifications')
+        self.cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
+        self.nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
+        self.max_vars = blackboard.config['processing.db'].getint('max variable modifications')
 
-        self.use_decoys = blackboard.config['decoys'].getboolean('generate decoys')
-        self.decoy_prefix = blackboard.config['decoys']['decoy prefix']
-        self.decoy_method = blackboard.config['decoys']['decoy method']
+        self.use_decoys = blackboard.config['processing.db'].getboolean('generate decoys')
+        self.decoy_prefix = blackboard.config['processing.db']['decoy prefix']
+        self.decoy_method = blackboard.config['processing.db']['decoy method']
 
         self.seq_types = ['normal']
         if self.use_decoys:
@@ -117,24 +117,10 @@ def user_processing(start, end):
     """
 
     cur = blackboard.CONN.cursor()
-    max_charge = blackboard.config['search'].getint('max charge')
+    max_charge = blackboard.config['processing.db'].getint('max charge')
 
-    rt_fn = pred_rt
-    spec_fn = theoretical_spectrum
-    try:
-        mod, fn = blackboard.config['database']['rt function'].rsplit('.', 1)
-        user_fn = getattr(__import__(mod, fromlist=[fn]), fn)
-        rt_fn = user_fn
-    except:
-        import sys
-        sys.stderr.write("[db]: user rt prediction function not found, using default function instead\n")
-    try:
-        mod, fn = blackboard.config['database']['spectrum function'].rsplit('.', 1)
-        user_fn = getattr(__import__(mod, fromlist=[fn]), fn)
-        spec_fn = user_fn
-    except:
-        import sys
-        sys.stderr.write("[db]: user spectrum prediction function not found, using default function instead\n")
+    rt_fn = pepid_utils.import_or(blackboard.config['processing.db']['rt function'], pred_rt)
+    spec_fn = pepid_utils.import_or(blackboard.config['processing.db']['spectrum function'], theoretical_spectrum)
 
     blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     data = cur.fetchall()
@@ -214,7 +200,7 @@ def fill_db(start, end):
     Peptide retention time prediction and peptide spectrum prediction are generated based on config at this stage.
     """
 
-    batch_size = blackboard.config['performance'].getint('batch size')
+    batch_size = blackboard.config['processing.db'].getint('batch size')
     input_file = open(blackboard.config['data']['database'])
 
     settings = DbSettings()
