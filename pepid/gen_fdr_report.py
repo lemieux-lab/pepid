@@ -15,7 +15,7 @@ def tda_fdr(rescored=False):
     fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
     f = (fname + "." + fext) if not rescored else (fname + blackboard.config['rescoring']['suffix'] + "." + fext)
     decoy_prefix = blackboard.config['processing.db']['decoy prefix']
-    topN = blackboard.config['output'].getint('max retained candidates')
+    topN = blackboard.config['report'].getint('max scores')
 
     data = []
 
@@ -26,7 +26,7 @@ def tda_fdr(rescored=False):
                 title, desc, seq, modseq, score = l.split("\t", 4)
             except:
                 import sys
-                sys.stderr.write("ERR: {}\n".format(l))
+                sys.stderr.write("During report: ERR: {}\n".format(l))
                 sys.exit(-1)
             if not rescored:
                 score = float(score)
@@ -35,13 +35,13 @@ def tda_fdr(rescored=False):
             if not math.isinf(score):
                 data.append((title, score, desc.startswith(decoy_prefix)))
 
-    dtype = [('title', numpy.unicode_, 1024), ('score', numpy.float64), ('decoy', numpy.bool)]
-    data = numpy.array(data, dtype=dtype)
-    data.sort(order=['score'])
-    data = data[::-1]
-    keys = numpy.unique(data['title'])
+    dtype = [('title', object), ('score', numpy.float64), ('decoy', numpy.bool)]
+    ndata = numpy.array(data, dtype=dtype)
+    ndata.sort(order=['score'])
+    ndata = ndata[::-1]
+    keys = numpy.unique([d[0] for d in data])
     grouped_data = {k: [] for k in keys}
-    for d in data:
+    for d in ndata:
         if len(grouped_data[d['title']]) >= topN:
             continue
         grouped_data[d['title']].append(d)
@@ -49,14 +49,19 @@ def tda_fdr(rescored=False):
 
     fdr = (2 * data['decoy'].sum()) / float(len(data))
 
+    # resort the collated subdata before further processing
     data.sort(order=['score'])
     data = data[::-1]
+
     fdr_index = numpy.arange(1, data.shape[0]+1)
     fdr_levels = numpy.cumsum(2 * data['decoy'].astype('float32')) / fdr_index
     sort_idx = numpy.argsort(fdr_levels)
     fdr_index = fdr_index[sort_idx]
     fdr_levels = fdr_levels[sort_idx]
-    fdr_index = numpy.array([fdr_index[0] if i == 0 else max(fdr_index[i], fdr_index[:i].max()) for i in range(len(fdr_index))])
+    fmax = fdr_index[0]
+    for i in range(len(fdr_index)):
+        fmax = max(fmax, fdr_index[i])
+        fdr_index[i] = fmax
 
     mask = numpy.logical_and(0.005 < fdr_levels, fdr_levels <= 0.25)
     fdr_index = fdr_index[mask]
@@ -69,7 +74,7 @@ def tda_fdr(rescored=False):
 
     print("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max()))
 
-    return len(data), fdr, numpy.array(list(zip(fdr_levels, fdr_index)))
+    return len(grouped_data), fdr, numpy.array(list(zip(fdr_levels, fdr_index)))
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
