@@ -47,16 +47,19 @@ def calc_ppm(x, y):
 def calc_rev_ppm(y, ppm):
     return (ppm * 1e-6) * y
 
-def b_series(seq, mods, cterm, nterm, z=1):
-    return ((numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)])) + (MASS_H * z)) / z
+def b_series(seq, mods, nterm, cterm, z=1):
+    return ((numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)])) + cterm - MASS_OH + (MASS_H * z)) / z
 
-def y_series(seq, mods, cterm, nterm, z=1):
-    series = (numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq[::-1], mods[::-1])]) + nterm + cterm + (MASS_H * z)) / z
+def y_series(seq, mods, nterm, cterm, z=1):
+    series = (numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq[::-1], mods[::-1])]) + cterm + MASS_H + (MASS_H * z)) / z
     return series
 
 def theoretical_mass(seq, mods, nterm, cterm):
     ret = sum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)]) + nterm + cterm
     return ret
+
+def neutral_mass(seq, mods, nterm, cterm, z=1):
+    return (theoretical_mass(seq, mods, nterm, cterm) + (MASS_H * z)) / z
 
 ion_shift = {
     'a': 46.00547930326002,
@@ -83,11 +86,9 @@ def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by"):
 
 def import_or(s, default):
     try:
-        mod, fn = s.rsplit(':', 1)
+        mod, fn = s.rsplit('.', 1)
         return getattr(__import__(mod, fromlist=[fn]), fn)
     except:
         import sys
         sys.stderr.write("Could not find '{}', using default value instead\n".format(s))
         return default
-
-

@@ -70,34 +70,15 @@ def pred_rt(cands):
 
     return [0.0] * len(cands)
 
-def identipy_theoretical_spectrum(cands, n):
-    """
-    Simple spectrum prediction function generating b- and y-series ions
-    without charged variants
-    """
-
-    cterm = blackboard.config['search'].getfloat('cterm cleavage')
-    nterm = blackboard.config['search'].getfloat('nterm cleavage')
-
-    ret = []
-
-    for i in range(len(cands)):
-        seq = cands[i]['seq']
-        mod = cands[i]['mods']
-        th_masses = pepid_utils.identipy_theor_spectrum(seq, mod, nterm, cterm)
-        ret.append(th_masses)
-
-    return ret
-
-def theoretical_spectrum(cands): # NOTE: MUST return sorted peak lists!
+def theoretical_spectrum(cands):
     """
     Spectrum prediction function generating b- and y-series ions
     with charged variants
     """
 
-    cterm = blackboard.config['search'].getfloat('cterm cleavage')
-    nterm = blackboard.config['search'].getfloat('nterm cleavage')
-    max_charge = blackboard.config['search'].getint('max charge')
+    cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
+    nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
+    max_charge = blackboard.config['processing.db'].getint('max charge')
 
     ret = []
 
@@ -188,7 +169,7 @@ def process_entry(description, buff, settings):
                 for var in var_set:
                     mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                     if settings.min_mass <= mass <= settings.max_mass:
-                        data.append({"desc": description, "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
+                        data.append({"id": peps[j] + ":" + str(var), "desc": description.split(" ", 1)[0], "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
     return data
 
 def fill_db(start, end):
@@ -230,7 +211,7 @@ def fill_db(start, end):
 
     cur = blackboard.CONN.cursor()
 
-    blackboard.executemany(cur, blackboard.insert_dict_str("candidates", blackboard.DB_COLS), data)
+    blackboard.executemany(cur, blackboard.insert_dict_extra_str("candidates", blackboard.DB_COLS, "ON CONFLICT(seq, mods) DO UPDATE SET desc=desc || ';' || excluded.desc"), data)
     cur.close()
     blackboard.commit()
 
@@ -242,6 +223,6 @@ def prepare_db():
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, "DROP INDEX IF EXISTS cand_mass_idx;")
     blackboard.execute(cur, "DROP TABLE IF EXISTS candidates;")
-    blackboard.execute(cur, blackboard.create_table_str("c.candidates", blackboard.DB_COLS, blackboard.DB_TYPES, ["UNIQUE(seq, mods) ON CONFLICT IGNORE"]))
+    blackboard.execute(cur, blackboard.create_table_str("c.candidates", blackboard.DB_COLS, blackboard.DB_TYPES, extra=["UNIQUE(seq, mods)"]))
     cur.close()
     blackboard.commit()

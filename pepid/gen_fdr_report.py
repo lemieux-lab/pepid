@@ -13,9 +13,9 @@ import blackboard
 
 def tda_fdr(rescored=False):
     fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
-    f = (fname + "." + fext) if not rescored else (fname + blackboard.config['pipeline']['rescore suffix'] + "." + fext)
-    decoy_prefix = blackboard.config['decoys']['decoy prefix']
-    topN = blackboard.config['report'].getint('retain')
+    f = (fname + "." + fext) if not rescored else (fname + blackboard.config['rescoring']['suffix'] + "." + fext)
+    decoy_prefix = blackboard.config['processing.db']['decoy prefix']
+    topN = blackboard.config['output'].getint('max retained candidates')
 
     data = []
 

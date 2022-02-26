@@ -1,14 +1,6 @@
 import numpy
-from os import path
 import blackboard
 import pepid_utils
-import time
-import random
-import os
-import re
-import functools
-import pickle
-import db
 
 def identipy_rnhs(cands, q):
     """
@@ -44,24 +36,19 @@ def identipy_rnhs(cands, q):
 
         score = 0
         mult = []
-        match = {}
-        match2 = {}
         total_matched = 0
         sumI = 0
 
         for ifrag, fragments in enumerate(theoretical):
-            qblock = numpy.repeat(mz_array.reshape((-1, 1)), len(fragments), axis=1)
-
             sumi = 0
             nmatched = 0
 
             if (ifrag // 2 + 1) >= charge:
                 break
 
+            qblock = numpy.repeat(mz_array.reshape((-1, 1)), len(fragments), axis=1)
             cblock = numpy.repeat(fragments.T, len(mz_array), axis=0)
-
             dblock = numpy.abs(qblock - cblock)
-
             dist = dblock.min(axis=1)
 
             mask = (dist <= acc) if not acc_ppm else (dist / mz_array * 1e6 <= acc)
@@ -75,7 +62,7 @@ def identipy_rnhs(cands, q):
                 score += sumi / norm
 
         if total_matched == 0:
-            ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': c['desc'], 'seq': None, 'modseq': None})
+            ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': None, 'seq': None, 'modseq': None})
             continue
 
         for m in mult:
@@ -142,6 +129,8 @@ def search_core(start, end):
             cands = cur.fetchmany(batch_size)
             if len(cands) == 0:
                 break
+
+            descs = []
 
             all_q = [q] * len(cands)
 
