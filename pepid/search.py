@@ -1,10 +1,32 @@
 import numpy
+import numpy.linalg
 import blackboard
 import pepid_utils
 
+def cosine(cands, q):
+    """
+    Simple cosine distance between two spectra.
+    Requires both spectra to be simple (mz, intensity) lists.
+    """
+
+    blit_q = numpy.zeros((len(cands), 20000)) 
+
+    for i in range(len(cands)):
+        for mz, intens in q[i]['spec'].data:
+            if mz >= 2000-0.5 or mz == 0:
+                break
+            blit_q[i, round(mz * 10)] = intens
+
+    blit_cand = numpy.vstack([numpy.asarray(cands[i]['spec'].data.todense()[q[i]['charge']-1]) for i in range(len(cands))])
+
+    score = ((blit_q * blit_cand) / (numpy.linalg.norm(blit_q, axis=-1, keepdims=True) * numpy.linalg.norm(blit_cand, axis=-1, keepdims=True))).sum(axis=-1).reshape((-1,))
+    import sys
+    ret = [{'score': score[i], 'theoretical': q[i]['spec'].data, 'spec': cands[i]['spec'].data[q[i]['charge']-1], 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': cands[i]['desc'], 'seq': cands[i]['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'])])} for i in range(len(cands))]
+    return ret
+
 def identipy_rnhs(cands, q):
     """
-    Example scoring function: rnhs from identipy.
+    Sample scoring function: rnhs from identipy.
     Score output is a dictionary. If the score function will be rescored by mascot,
     the dictionary keys corresponding to the mascot parameters will be used for that purpose.    
 
@@ -127,10 +149,9 @@ def search_core(start, end):
         
         while True:
             cands = cur.fetchmany(batch_size)
+
             if len(cands) == 0:
                 break
-
-            descs = []
 
             all_q = [q] * len(cands)
 

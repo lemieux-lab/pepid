@@ -13,17 +13,22 @@ import blackboard
 
 def tda_fdr(rescored=False):
     fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
-    f = (fname + "." + fext) if not rescored else (fname + blackboard.config['rescoring']['suffix'] + "." + fext)
+    full_fname = (fname + "." + fext) if not rescored else (fname + blackboard.config['rescoring']['suffix'] + "." + fext)
     decoy_prefix = blackboard.config['processing.db']['decoy prefix']
     topN = blackboard.config['report'].getint('max scores')
 
     data = []
 
-    f = open(f, 'r')
+    try:
+        f = open(full_fname, 'r')
+    except:
+        import sys # despite top-level import, this is required... wtf???
+        sys.stderr.write("FATAL: File specified in {} ({}) could not be read\n".format(sys.argv[1], full_fname))
+        sys.exit(-1)
     for li, l in enumerate(f):
         if li > 0:
             try:
-                title, desc, seq, modseq, score = l.split("\t", 4)
+                title, desc, seq, modseq, score, meta = l.split("\t", 5)
             except:
                 import sys
                 sys.stderr.write("During report: ERR: {}\n".format(l))
@@ -34,6 +39,11 @@ def tda_fdr(rescored=False):
                 score = float(score_parts.split("\t")[1])
             if not math.isinf(score):
                 data.append((title, score, desc.startswith(decoy_prefix)))
+
+    if len(data) == 0:
+        import sys # despite top-level import, this is required... wtf???
+        sys.stderr.write("FATAL: No entries in {}!\n".format(full_fname))
+        sys.exit(-1)
 
     dtype = [('title', object), ('score', numpy.float64), ('decoy', numpy.bool)]
     ndata = numpy.array(data, dtype=dtype)

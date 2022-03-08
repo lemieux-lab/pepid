@@ -250,9 +250,11 @@ def run():
                                             [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
                 proc_spec = proc_spec + dbspec
 
+            if blackboard.config['processing.query'].getboolean('enabled') or blackboard.config['scoring'].getboolean('enabled'):
+                n_queries = queries.count_queries()
+
             if blackboard.config['processing.query'].getboolean('enabled'):
                 batch_size = blackboard.config['processing.query'].getint('batch size')
-                n_queries = queries.count_queries()
                 n_query_batches = math.ceil(n_queries / batch_size)
         
                 qspec = [("queries_node.py", qnodes, n_query_batches,
@@ -292,9 +294,7 @@ def run():
 
             handle_nodes("Input Postprocessing", qspec + dbspec)
 
-            cur = blackboard.CONN.cursor()
-            cur2 = blackboard.CONN.cursor()
-
+        cur = blackboard.CONN.cursor()
         blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
         del cur
 

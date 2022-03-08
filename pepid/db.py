@@ -12,6 +12,9 @@ import copy
 import helper
 import pickle
 
+import scipy
+import scipy.sparse
+
 class DbSettings():
     def __init__(self):
         pass
@@ -69,6 +72,39 @@ def pred_rt(cands):
     """
 
     return [0.0] * len(cands)
+
+def ml_spectrum(cands):
+    """
+    Spectrum prediction based on deep learning model
+    """
+
+    import spectrum_generator_multi as spectrum_generator
+    import torch
+
+    global MODEL
+    try:
+        MODEL
+    except:
+        MODEL = None
+
+    if MODEL is None:
+        MODEL = spectrum_generator.Model().cuda()
+        MODEL.load_state_dict(torch.load("ml/spectrum_generator_multi.pkl", map_location='cuda:0'))
+
+    cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
+    nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
+    max_charge = blackboard.config['processing.db'].getint('max charge')
+
+    embs = []
+    for i in range(len(cands)):
+        embs.append(spectrum_generator.embed({"pep": cands[i]['seq'],
+                                                "mods": cands[i]['mods']}))
+    embs = torch.FloatTensor(numpy.asarray(embs)).cuda()
+    out = MODEL(embs).view(len(cands), max_charge, -1)
+    mask = out[torch.arange(out.shape[0]).view(-1, 1, 1).cuda(), torch.arange(out.shape[1]).view(-1, 1).cuda(), out.argsort(dim=-1)[:,:,int(0.999*out.shape[-1])].view(-1, max_charge, 1)]
+    out[out < mask] = 0
+
+    return [scipy.sparse.csr_matrix(x) for x in out.detach().cpu().numpy()]
 
 def theoretical_spectrum(cands):
     """

@@ -44,7 +44,7 @@ def write_output():
         blackboard.execute(cur, "PRAGMA synchronous=OFF;")
         blackboard.execute(cur, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
 
-        blackboard.execute(cur, "SELECT results.rowid, {} FROM results JOIN (SELECT qrow, IFNULL((SELECT score FROM results WHERE qrow = qrows.qrow ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT qrow FROM results) AS qrows) AS cutoffs ON results.qrow = cutoffs.qrow AND results.score >= cutoffs.cutoff_score ORDER BY results.title ASC, results.score DESC;".format(",".join(map(lambda x: "results." + x, header[:-1]))), (max_cands-1,))
+        blackboard.execute(cur, "SELECT results.rowid, {} FROM results JOIN (SELECT qrow, IFNULL((SELECT score FROM results WHERE qrow = qrows.qrow ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT qrow FROM results) AS qrows) AS cutoffs ON results.qrow = cutoffs.qrow AND results.score >= cutoffs.cutoff_score ORDER BY results.title ASC, results.score DESC;".format(",".join(map(lambda x: "results." + x, header))), (max_cands-1,))
         fetch_batch_size = min(batch_size, 62000) # The maximum batch size supported by the default sqlite engine is a bit more than 62000
         while True:
             results = cur.fetchmany(fetch_batch_size)
@@ -55,7 +55,7 @@ def write_output():
             for idata, data in enumerate(results):
                 buff = ""
                 fields = []
-                for k in header[:-1]:
+                for k in header:
                     fields.append(str(data[k]).replace("\t", "    "))
                 #fields.append(str(data['rowid']))
                 buff = buff + "\t".join(fields) + "\n"
