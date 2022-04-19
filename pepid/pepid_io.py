@@ -18,7 +18,7 @@ def write_output():
     out_fname = blackboard.config['data']['output']
     outf = open(out_fname, 'w')
 
-    header = blackboard.RES_COLS[:-2]
+    header = blackboard.RES_COLS
 
     outf.write("\t".join(header) + "\n")
 

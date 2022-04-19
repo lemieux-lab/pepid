@@ -46,7 +46,8 @@ class Node():
                     except Exception as e:
                         err = "Failed to handle message {} -- {}".format(msg[0], repr(e)) 
                         conn.sendall(struct.pack("!cI{}sc".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8'), "$".encode('utf-8')))
-                        #traceback.print_tb(e.__traceback__)
+                        if blackboard.config['logging']['level'].lower() == 'debug':
+                            traceback.print_tb(e.__traceback__)
                 else:
                     err = "Unknown message code received: {}".format(msg[0])
                     conn.sendall(struct.pack("!cI{}s".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8')))

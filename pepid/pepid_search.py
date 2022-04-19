@@ -55,7 +55,7 @@ def handle_response(resp):
                 break
         return ret
 
-def handle_nodes(title, node_specs):
+def handle_nodes(title, node_specs, tqdm_silence=False):
     """
     Launches and monitors a set of nodes.
     Node-spec is [(node script, node count, n batches, [init msgs], [task msgs], [end msg]), ...]
@@ -80,7 +80,7 @@ def handle_nodes(title, node_specs):
                     continue
 
     n_total_nodes = sum([n[1] for n in node_specs])
-    progress = tqdm.tqdm(desc=title+":INIT", total=n_total_nodes, mininterval=0)
+    progress = tqdm.tqdm(desc=title+":INIT", total=n_total_nodes, mininterval=0, disable=tqdm_silence)
 
     init_messages = {socks[node_type][node_count].getpeername() : node_specs[node_type][3][node_count] for node_type in range(len(node_specs)) for node_count in range(node_specs[node_type][1])}
     term_messages = {socks[node_type][node_count].getpeername() : node_specs[node_type][5][node_count] for node_type in range(len(node_specs)) for node_count in range(node_specs[node_type][1])}
@@ -124,7 +124,7 @@ def handle_nodes(title, node_specs):
     progress.close()
 
     n_total_batches = sum([node_spec[2] for node_spec in node_specs])
-    progress = tqdm.tqdm(desc=title+":RUN", total=n_total_batches, mininterval=0)
+    progress = tqdm.tqdm(desc=title+":RUN", total=n_total_batches, mininterval=0, disable=tqdm_silence)
 
     waiting_socks = copy.copy(all_socks)
     engaged_socks = []
@@ -161,7 +161,7 @@ def handle_nodes(title, node_specs):
             sys.exit(2)
 
     progress.close()
-    progress = tqdm.tqdm(desc=title+":TERM", total=n_total_nodes, mininterval=0)
+    progress = tqdm.tqdm(desc=title+":TERM", total=n_total_nodes, mininterval=0, disable=tqdm_silence)
 
     n_ready = 0
     done_nodes = []
@@ -250,7 +250,7 @@ def run():
                                             [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
                 proc_spec = proc_spec + dbspec
 
-            if blackboard.config['processing.query'].getboolean('enabled') or blackboard.config['scoring'].getboolean('enabled'):
+            if (blackboard.config['processing.query'].getboolean('enabled') and blackboard.config['postprocessing'].getboolean('queries')) or blackboard.config['scoring'].getboolean('enabled'):
                 n_queries = queries.count_queries()
 
             if blackboard.config['processing.query'].getboolean('enabled'):
@@ -265,7 +265,7 @@ def run():
                 proc_spec = proc_spec + qspec
 
             if len(proc_spec) != 0:
-                handle_nodes("Input Processing", proc_spec)
+                handle_nodes("Input Processing", proc_spec, tqdm_silence)
 
         if blackboard.config['postprocessing'].getboolean('enabled'):
             idx = 0
@@ -273,26 +273,34 @@ def run():
             qnodes = blackboard.config['processing.query'].getint('postprocessing workers')
             dbnodes = blackboard.config['processing.db'].getint('postprocessing workers')
 
-            batch_start = 0
-            q_batch_size = blackboard.config['processing.query'].getint('batch size')
-            db_batch_size = blackboard.config['processing.db'].getint('batch size')
-            n_db = db.count_peps()
-            n_db_batches = math.ceil(n_db / db_batch_size)
-
             if qnodes < 0 or dbnodes < 0:
                 log.fatal("post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
                 sys.exit(2)
 
-            qspec = [("queries_node.py", qnodes, n_query_batches,
-                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
-                            [struct.pack("!cQQc", bytes([0x02]), b * q_batch_size, min((b+1) * q_batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
-                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
-            dbspec = [("db_node.py", dbnodes, n_db_batches,
-                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                            [struct.pack("!cQQc", bytes([0x02]), b * db_batch_size, min((b+1) * db_batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
-                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
+            specs = []
 
-            handle_nodes("Input Postprocessing", qspec + dbspec)
+            if blackboard.config['postprocessing'].getboolean('db'):
+                db_batch_size = blackboard.config['processing.db'].getint('batch size')
+                n_db = db.count_peps()
+                n_db_batches = math.ceil(n_db / db_batch_size)
+
+                dbspec = [("db_node.py", dbnodes, n_db_batches,
+                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                                [struct.pack("!cQQc", bytes([0x02]), b * db_batch_size, min((b+1) * db_batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
+                                [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
+                specs.extend(dbspec)
+
+            if blackboard.config['postprocessing'].getboolean('queries'):
+                q_batch_size = blackboard.config['processing.query'].getint('batch size')
+                n_query_batches = math.ceil(n_queries / q_batch_size)
+                qspec = [("queries_node.py", qnodes, n_query_batches,
+                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
+                                [struct.pack("!cQQc", bytes([0x02]), b * q_batch_size, min((b+1) * q_batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
+                                [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
+                specs.extend(qspec)
+
+            if len(specs) != 0:
+                handle_nodes("Input Postprocessing", specs, tqdm_silence)
 
         cur = blackboard.CONN.cursor()
         blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
@@ -306,7 +314,7 @@ def run():
                             [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_search_batches)],
                             [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(snodes)])]
 
-            handle_nodes("Search", sspec)
+            handle_nodes("Search", sspec, tqdm_silence)
 
             import glob
             fname_pattern = list(filter(lambda x: len(x) > 0, blackboard.config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_*_pepidpart.sqlite"
@@ -320,7 +328,10 @@ def run():
         log.info("Done.")
         if blackboard.config['output'].getboolean('enabled'):
             log.info("Saving results to {}...".format(blackboard.config['data']['output']))
-            #os.system("sqlite3 -header -csv \"{}\" \"SELECT results.rowid, {} FROM results JOIN (SELECT title, IFNULL((SELECT score FROM results WHERE title = titles.title AND score > 0 ORDER BY score DESC LIMIT 1 OFFSET {}), -1) AS cutoff_score FROM (SELECT DISTINCT title FROM results) AS titles) AS cutoffs ON results.title = cutoffs.title AND results.score >= cutoffs.cutoff_score;\" > \"{}\"".format(blackboard.RES_DB_PATH, ",".join(map(lambda x: "results." + x, blackboard.RES_COLS[:-1])), blackboard.config['search'].getint('max retained candidates') - 1, blackboard.config['data']['output']))
+            #import glob
+            #parts = glob.glob(os.path.join(blackboard.TMP_PATH, "*part*sqlite"))
+            #for ipart, part in enumerate(parts):
+            #    os.system("sqlite3 {} -csv \"{}\" \"SELECT results.rowid, {} FROM results JOIN (SELECT title, IFNULL((SELECT score FROM results WHERE title = titles.title AND score > 0 ORDER BY score DESC LIMIT 1 OFFSET {}), -1) AS cutoff_score FROM (SELECT DISTINCT title FROM results) AS titles) AS cutoffs ON results.title = cutoffs.title AND results.score >= cutoffs.cutoff_score;\" >> \"{}\"".format("-header" if ipart == 0 else "", part, ",".join(map(lambda x: "results." + x, blackboard.RES_COLS)), blackboard.config['output'].getint('max retained candidates') - 1, blackboard.config['data']['output']))
             pepid_io.write_output()
             log.info("Saving results done.")
 
@@ -345,14 +356,15 @@ if __name__ == "__main__":
 
     blackboard.config.read('data/default.cfg')
 
-    blackboard.config.read(sys.argv[1])
     cfg_file = sys.argv[1]
+    blackboard.config.read(cfg_file)
 
-    logging.basicConfig(format="[%(asctime)s] %(levelname)s: %(message)s", level=eval("logging.{}".format(blackboard.config['logging']['level'].upper())))
-    log = logging.getLogger("pepid")
+    tqdm_silence = blackboard.config['logging']['level'].lower() in ['fatal', 'error', 'warning']
 
     blackboard.TMP_PATH = os.path.join(blackboard.config['data']['tmpdir'], "pepidrun_" + next(tempfile._get_candidate_names()))
     blackboard.setup_constants() # overrides TMP_PATH if workdir setting points to a directory to reuse
+    log = blackboard.LOG
+
     if(not os.path.exists(blackboard.TMP_PATH)):
         os.mkdir(blackboard.TMP_PATH)
 

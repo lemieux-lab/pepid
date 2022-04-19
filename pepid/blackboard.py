@@ -6,19 +6,29 @@ import uuid
 import pickle
 import sys
 
+import logging
+
+LOG = None
 CONN = None
 RES_CONN = None
+META_CONN = None
+
 config = configparser.ConfigParser(inline_comment_prefixes="#")
+
 DB_TYPES = None
 RES_TYPES = None
+META_TYPES = None
 QUERY_TYPES = None
 DB_COLS = None
 RES_COLS = None
+META_COLS = None
 QUERY_COLS = None
 DB_FNAME = None
 RES_DB_FNAME = None
+META_DB_FNAME = None
 DB_PATH = None
 RES_DB_PATH = None
+META_DB_PATH = None
 LOCK = None
 TMP_PATH = None
 
@@ -55,15 +65,21 @@ def select_str(table_name, table_cols, extra=""):
 def init_results_db(generate=False, base_dir=None):
     global RES_DB_FNAME
     global RES_DB_PATH
+    global META_DB_FNAME
+    global META_DB_PATH
     global RES_CONN
+    global META_CONN
 
     if base_dir is None:
         base_dir = TMP_PATH
 
     if generate:
         unique = str(uuid.uuid4())
-        RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_{}_pepidpart.sqlite".format(unique)
+        RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_{}_pepidpart".format(unique)
+        META_DB_FNAME = RES_DB_FNAME + "_meta.sqlite"
+        RES_DB_FNAME = RES_DB_FNAME + ".sqlite"
         RES_DB_PATH = os.path.join(base_dir, RES_DB_FNAME)
+        META_DB_PATH = os.path.join(base_dir, META_DB_FNAME)
 
     RES_CONN = None
     _CONN = None
@@ -88,9 +104,34 @@ def init_results_db(generate=False, base_dir=None):
     execute(cur, create_table_str("main.results", RES_COLS, [t if ((i != RES_COLS.index("score")) or (not generate)) else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
     RES_CONN.commit()
 
+    META_CONN = None
+    _CONN = None
+    while META_CONN is None:
+        try:
+            _CONN = sqlite3.connect("file:" + META_DB_PATH + "?cache=shared", detect_types=1, uri=True, timeout=0.1)
+            cur = _CONN.cursor()
+            cur.execute("PRAGMA synchronous=OFF;")
+            #cur.execute("PRAGMA temp_store=MEMORY;")
+            cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
+            #cur.execute("PRAGMA journal_mode=WAL;")
+            META_CONN = _CONN
+        except:
+            if _CONN is not None:
+                _CONN.close()
+                _CONN = None
+            time.sleep(0.1)
+            continue
+
+    META_CONN.row_factory = sqlite3.Row
+    cur = META_CONN.cursor()
+    execute(cur, create_table_str("main.meta", META_COLS, [t if ((i != META_COLS.index("score")) or (not generate)) else (t + " CHECK(score > 0)") for i, t in enumerate(META_TYPES)]))
+    META_CONN.commit()
+
 def setup_constants():
     global RES_COLS
+    global META_COLS
     global RES_TYPES
+    global META_TYPES
     global DB_COLS
     global DB_TYPES
     global QUERY_COLS
@@ -100,11 +141,18 @@ def setup_constants():
     global DB_PATH
     global RES_DB_FNAME
     global RES_DB_PATH
+    global META_DB_FNAME
+    global META_DB_PATH
 
     global TMP_PATH
 
-    RES_COLS = ["title", "desc", "seq", "modseq", "score", "data", "candrow", "qrow"]
-    RES_TYPES = ["TEXT", "TEXT", "TEXT", "TEXT", "REAL", "BLOB", "INTEGER", "INTEGER"]
+    global LOG
+
+    RES_COLS = ["title", "desc", "seq", "modseq", "score", "query_charge", "query_mass", "cand_mass", "candrow", "qrow", "file", "rrow"]
+    RES_TYPES = ["TEXT", "TEXT", "TEXT", "BLOB", "REAL", "INTEGER", "REAL", "REAL", "INTEGER", "INTEGER", "TEXT", "INTEGER"]
+
+    META_COLS = ["qrow", "candrow", "data", "score", "rrow"] # score is used to mirror insertion exclusion via CHECK(score > 0) from the 'data' db
+    META_TYPES = ["INTEGER", "INTEGER", "TEXT", "REAL", "INTEGER"]
 
     DB_COLS = ["desc", "rt", "length", "mass", "seq", "mods", "spec", "meta"]
     DB_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM", "META"]
@@ -119,7 +167,8 @@ def setup_constants():
     sqlite3.register_converter("autoblob", lambda x: pickle.loads(x))
 
     DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
-    RES_DB_FNAME = DB_FNAME
+    RES_DB_FNAME = DB_FNAME + ".sqlite"
+    META_DB_FNAME = DB_FNAME + "_meta.sqlite"
 
     workdir = config['data']['workdir']
     try:
@@ -132,6 +181,13 @@ def setup_constants():
 
     DB_PATH = os.path.join(TMP_PATH, DB_FNAME)
     RES_DB_PATH = DB_PATH + ".sqlite"
+    META_DB_PATH = DB_PATH + "_meta.sqlite"
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
+    LOG = logging.getLogger("pepid")
+    LOG.setLevel(config['logging']['level'].upper())
+    LOG.addHandler(handler)
 
 def prepare_connection():
     global CONN

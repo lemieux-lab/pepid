@@ -17,10 +17,9 @@ def cosine(cands, q):
                 break
             blit_q[i, round(mz * 10)] = intens
 
-    blit_cand = numpy.vstack([numpy.asarray(cands[i]['spec'].data.todense()[q[i]['charge']-1]) for i in range(len(cands))])
+    blit_cand = numpy.vstack([numpy.asarray(cands[i]['spec'].data[q[i]['charge']-1].todense()) for i in range(len(cands))])
+    score = ((blit_q * blit_cand) / numpy.maximum(1e-5, (numpy.linalg.norm(blit_q, axis=-1, keepdims=True) * numpy.linalg.norm(blit_cand, axis=-1, keepdims=True)))).sum(axis=-1).reshape((-1,))
 
-    score = ((blit_q * blit_cand) / (numpy.linalg.norm(blit_q, axis=-1, keepdims=True) * numpy.linalg.norm(blit_cand, axis=-1, keepdims=True))).sum(axis=-1).reshape((-1,))
-    import sys
     ret = [{'score': score[i], 'theoretical': q[i]['spec'].data, 'spec': cands[i]['spec'].data[q[i]['charge']-1], 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': cands[i]['desc'], 'seq': cands[i]['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'])])} for i in range(len(cands))]
     return ret
 
@@ -35,8 +34,6 @@ def identipy_rnhs(cands, q):
     (e.g. for the -13 empirical correction of MIT)
     """
 
-    import scipy
-    from scipy import spatial
     ret = []
     scores = []
 
@@ -60,6 +57,8 @@ def identipy_rnhs(cands, q):
         mult = []
         total_matched = 0
         sumI = 0
+        masks = []
+        dists = []
 
         for ifrag, fragments in enumerate(theoretical):
             sumi = 0
@@ -72,8 +71,10 @@ def identipy_rnhs(cands, q):
             cblock = numpy.repeat(fragments.T, len(mz_array), axis=0)
             dblock = numpy.abs(qblock - cblock)
             dist = dblock.min(axis=1)
+            dists.append(dist)
 
             mask = (dist <= acc) if not acc_ppm else (dist / mz_array * 1e6 <= acc)
+            masks.append(mask)
             sumi += intens[mask].sum()
             nmatched += mask.sum()
 
@@ -84,26 +85,47 @@ def identipy_rnhs(cands, q):
                 score += sumi / norm
 
         if total_matched == 0:
-            ret.append({'score': 0, 'theoretical': None, 'spec': None, 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': None, 'seq': None, 'modseq': None})
+            ret.append({"dM": 0, #"MIT": mascot_t, "MHT": mascot_t, "mScore": mascot
+                        "peptideLength": 0, "z1": 0, "z2": 0,
+                        "z4": 0, "z7": 0, "isoDM": 0,
+            #            "isoDMppm": abs(pepid_utils.calc_ppm(c['mass'], q[i]['mass'])), "isoDmz": abs(c['mass'] - q[i]['mass']),
+            #            "12C": 1, "mc0": int(mc == 0), "mc1": int(0 <= mc <= 1), "mc2": int(mc >= 2),
+                        'varmods': 0,
+                        'varmodsCount': 0, 'totInt': 0,
+            #           'intMatchedTot': numpy.log10(sum([spec[dist_mask[:,i]][:,1].sum() for i in range(dist_mask.shape[1])])),
+                       'intMatchedTot': 0,
+                        'relIntMatchedTot': 0, 'RMS': 0,
+                        'RMSppm': 0,
+                        'meanAbsFragDa': 0, 'meanAbsFragPPM': 0,
+                        'rawscore': 0,
+
+                'score': 0, 'sumI': 0, 'total_matched': 0, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': ""})
+
             continue
 
         for m in mult:
             score *= m
-        sumI = numpy.log10(sumI)
+        logsumI = numpy.log10(sumI)
 
-        ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'sumI': sumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
-        #ret.append({"mScore": rnhs_score, "dM": cand.mass - query['mass'], "MIT": mascot_t, "MHT": mascot_t,
-        #            "peptideLength": len(cand.sequence.decode('ascii')), "z1": int(query['charge'] == 1), "z2": int(2 <= query['charge'] <= 3),
-        #            "z4": int(4 <= query['charge'] <= 6), "z7": int(query['charge'] >= 7), "isoDM": abs(cand.mass - query['mass']),
-        #            "isoDMppm": abs(pepid_utils.calc_ppm(cand.mass, query['mass'])), "isoDmz": abs(cand.mass - query['mass']),
+        #ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'sumI': logsumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
+
+        ret.append({"dM": c['mass'] - q[i]['mass'], #"MIT": mascot_t, "MHT": mascot_t, "mScore": mascot
+                    "peptideLength": len(c['seq']), "z1": int(q[i]['charge'] == 1), "z2": int(2 <= q[i]['charge'] <= 3),
+                    "z4": int(4 <= q[i]['charge'] <= 6), "z7": int(q[i]['charge'] >= 7), "isoDM": abs(c['mass'] - q[i]['mass']),
+        #            "isoDMppm": abs(pepid_utils.calc_ppm(c['mass'], q[i]['mass'])), "isoDmz": abs(c['mass'] - q[i]['mass']),
         #            "12C": 1, "mc0": int(mc == 0), "mc1": int(0 <= mc <= 1), "mc2": int(mc >= 2),
-        #            'varmods': float((numpy.asarray(mods) > 0).sum()) / max(1, sum([x in varmods for x in cand.sequence.decode('ascii')])),
-        #            'varmodsCount': len(numpy.unique(mods)), 'totInt': numpy.log10(intens_sum),
-        #            'intMatchedTot': numpy.log10(sum([spec[dist_mask[:,i]][:,1].sum() for i in range(dist_mask.shape[1])])),
-        #            'relIntMatchedTot': intens_score, 'RMS': numpy.sqrt((all_dists[dist_mask]**2).mean()),
-        #            #'RMSppm': numpy.sqrt((((all_dists[dist_mask] / all_masses[dist_mask]) * 1e6)**2).mean()),
-        #            'meanAbsFragDa': all_dists[dist_mask].mean(), #'meanAbsFragPPM': (all_dists[dist_mask] / all_masses[dist_mask]).mean(),
-        #            'rawscore': intens_score})
+                    'varmods': float((numpy.asarray(c['mods']) > 0).sum()) / max(1, sum([x in c['mods'] for x in c['seq']])),
+                    'varmodsCount': len(numpy.unique(c['mods'])), 'totInt': numpy.log10(norm),
+        #           'intMatchedTot': numpy.log10(sum([spec[dist_mask[:,i]][:,1].sum() for i in range(dist_mask.shape[1])])),
+                    'intMatchedTot': logsumI,
+                    'relIntMatchedTot': sumI / norm, 'RMS': numpy.sqrt(numpy.mean([(d[m]**2).mean() for d, m in zip(dists, masks) if m.sum() != 0])),
+                    'RMSppm': numpy.sqrt(numpy.mean([(((d[m] / mz_array[m]) * 1e6)**2).mean() for d, m in zip(dists, masks) if m.sum() != 0])),
+                    'meanAbsFragDa': numpy.mean([d[m].mean() for d, m in zip(dists, masks) if m.sum() != 0]), 'meanAbsFragPPM': numpy.mean([(d[m] / mz_array[m]).mean() for d, m in zip(dists, masks) if m.sum() != 0]),
+                    'rawscore': score,
+                    'expMass': q[i]['mass'],
+                    'calcMass': c['mass'],
+
+            'score': score, 'sumI': logsumI, 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
 
     return ret
 
@@ -140,10 +162,15 @@ def search_core(start, end):
 
     cur = blackboard.CONN.cursor()
     res_cur = blackboard.RES_CONN.cursor()
+    m_cur = blackboard.META_CONN.cursor()
 
     blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     queries = cur.fetchall()
 
+    blackboard.execute(m_cur, "SELECT MAX(rrow) FROM meta;")
+    prev_rrow = m_cur.fetchone()
+    rrow = 0 if prev_rrow[0] is None else prev_rrow[0] + 1
+    fname_prefix = blackboard.RES_DB_FNAME.rsplit(".", 1)[0]
     for iq, q in enumerate(queries):
         blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
         
@@ -156,11 +183,19 @@ def search_core(start, end):
             all_q = [q] * len(cands)
 
             res = scoring_fn(cands, all_q)
-            r = [{'data': b'', 'candrow': c['rowid'], 'qrow': q['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
+            #r = [{'data': str({'cand_id': c['rowid'], 'query_id': q['rowid'], 'cand_mass': c['mass'], 'cand_seq': c['seq'], 'cand_mods': c['mods'], 'query_mass': q['mass'], 'query_charge': q['charge'], 'total_matched': r['total_matched'], 'sumI': r['sumI']}), 'qrow': q['rowid'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
+
+            #r = [{'data': str(r), 'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
+            r = [{'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': q['charge'], 'query_mass': q['mass'], 'cand_mass': c['mass'], 'rrow': rrow + ii, 'file': fname_prefix} for ii, (r, c) in enumerate(zip(res, cands))]
             blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), r)
-            blackboard.RES_CONN.commit()
+            #blackboard.RES_CONN.commit()
+            blackboard.executemany(m_cur, blackboard.maybe_insert_dict_str("meta", blackboard.META_COLS), [{'score': r['score'], 'qrow': q['rowid'], 'candrow': c['rowid'], 'data': str(r), "rrow": rrow + ii} for ii, (r, c) in enumerate(zip(res, cands))])
+            #blackboard.META_CONN.commit()
+            rrow += len(res)
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_qrow_idx ON results (qrow ASC, score DESC);")
+    blackboard.execute(m_cur, "CREATE INDEX IF NOT EXISTS m_rrow_idx ON meta (rrow ASC);")
     blackboard.RES_CONN.commit()
+    blackboard.META_CONN.commit()
 
 def prepare_search():
     """

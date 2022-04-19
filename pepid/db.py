@@ -78,7 +78,7 @@ def ml_spectrum(cands):
     Spectrum prediction based on deep learning model
     """
 
-    import spectrum_generator_multi as spectrum_generator
+    import spectrum_generator_sparse as spectrum_generator
     import torch
 
     global MODEL
@@ -89,22 +89,26 @@ def ml_spectrum(cands):
 
     if MODEL is None:
         MODEL = spectrum_generator.Model().cuda()
-        MODEL.load_state_dict(torch.load("ml/spectrum_generator_multi.pkl", map_location='cuda:0'))
+        MODEL.load_state_dict(torch.load("ml/spectrum_generator_sparse.pkl", map_location='cuda:0'))
 
     cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
     nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
     max_charge = blackboard.config['processing.db'].getint('max charge')
 
-    embs = []
-    for i in range(len(cands)):
-        embs.append(spectrum_generator.embed({"pep": cands[i]['seq'],
-                                                "mods": cands[i]['mods']}))
-    embs = torch.FloatTensor(numpy.asarray(embs)).cuda()
-    out = MODEL(embs).view(len(cands), max_charge, -1)
-    mask = out[torch.arange(out.shape[0]).view(-1, 1, 1).cuda(), torch.arange(out.shape[1]).view(-1, 1).cuda(), out.argsort(dim=-1)[:,:,int(0.999*out.shape[-1])].view(-1, max_charge, 1)]
-    out[out < mask] = 0
+    out = []
+    for j in range(1, max_charge+1):
+        embs = []
+        for i in range(len(cands)):
+            embs.append(spectrum_generator.embed({"pep": cands[i]['seq'],
+                                                "mods": cands[i]['mods'],
+                                                "charge": j,
+                                                "mass": pepid_utils.neutral_mass(cands[i]['seq'], cands[i]['mods'], nterm, cterm, j)}))
+        embs = torch.FloatTensor(numpy.asarray(embs)).cuda()
+        out.append(MODEL(embs).view(len(cands), -1))
+        out[-1] = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
+    out = numpy.stack(out, axis=1)
 
-    return [scipy.sparse.csr_matrix(x) for x in out.detach().cpu().numpy()]
+    return [scipy.sparse.csr_matrix(x) for x in out]
 
 def theoretical_spectrum(cands):
     """
@@ -126,6 +130,9 @@ def theoretical_spectrum(cands):
 
     return ret
 
+def stub(x):
+    return x
+
 def user_processing(start, end):
     """
     Parses the spectrum prediction and rt prediction functions from config
@@ -138,17 +145,27 @@ def user_processing(start, end):
 
     rt_fn = pepid_utils.import_or(blackboard.config['processing.db']['rt function'], pred_rt)
     spec_fn = pepid_utils.import_or(blackboard.config['processing.db']['spectrum function'], theoretical_spectrum)
+    user_fn = pepid_utils.import_or(blackboard.config['processing.db']['postprocessing function'], stub)
 
     blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     data = cur.fetchall()
+    data = list(map(dict, data))
 
     rts = rt_fn(data)
     specs = spec_fn(data)
 
     specs = [blackboard.Spectrum(spec) for spec in specs]
-    rowids = list(range(start+1, end+1))
+    
+    for i in range(len(data)):
+        data[i]['spec'] = specs[i]
+        data[i]['rt'] = rts[i]
+    ret = user_fn(data)
+    #rowids = list(range(start+1, end+1))
+    for r in ret:
+        r['mods'] = pickle.dumps(r['mods'])
 
-    blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
+    #blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
+    blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)
     blackboard.commit()
 
 def process_entry(description, buff, settings):

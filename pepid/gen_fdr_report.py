@@ -22,13 +22,13 @@ def tda_fdr(rescored=False):
     try:
         f = open(full_fname, 'r')
     except:
-        import sys # despite top-level import, this is required... wtf???
+        import sys
         sys.stderr.write("FATAL: File specified in {} ({}) could not be read\n".format(sys.argv[1], full_fname))
         sys.exit(-1)
     for li, l in enumerate(f):
         if li > 0:
             try:
-                title, desc, seq, modseq, score, meta = l.split("\t", 5)
+                title, desc, seq, modseq, score, db_prefix, db_line = l.split("\t", 6)
             except:
                 import sys
                 sys.stderr.write("During report: ERR: {}\n".format(l))
@@ -45,7 +45,7 @@ def tda_fdr(rescored=False):
         sys.stderr.write("FATAL: No entries in {}!\n".format(full_fname))
         sys.exit(-1)
 
-    dtype = [('title', object), ('score', numpy.float64), ('decoy', numpy.bool)]
+    dtype = [('title', object), ('score', numpy.float64), ('decoy', bool)]
     ndata = numpy.array(data, dtype=dtype)
     ndata.sort(order=['score'])
     ndata = ndata[::-1]
@@ -78,25 +78,29 @@ def tda_fdr(rescored=False):
     fdr_levels = fdr_levels[mask]
 
     if len(fdr_levels) == 0:
-        print("[WARN] Empty fdr levels in fdr report")
+        blackboard.LOG.warning("Empty fdr levels in fdr report")
         fdr_levels = numpy.array([0])
         fdr_index = numpy.array([0])
 
-    print("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max()))
+    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max()))
 
     return len(grouped_data), fdr, numpy.array(list(zip(fdr_levels, fdr_index)))
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("USAGE: {} config.cfg [output|rescored]".format(sys.argv[0]))
+        blackboard.LOG.error("USAGE: {} config.cfg [output|rescored]".format(sys.argv[0]))
         sys.exit(1)
 
     blackboard.config.read("data/default.cfg")
     blackboard.config.read(sys.argv[1])
+
+    blackboard.setup_constants()
+
     n_data, fdr, curve = tda_fdr()
+    fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
 
     plt.title("Peptide Discovery vs FDR Threshold for {} ({})".format(sys.argv[1], sys.argv[2]))
     plt.ylabel("Discovered Peptides (Max: {})".format(n_data))
     plt.xlabel("FDR Threshold")
     plt.plot(curve[:,0], curve[:,1])
-    plt.savefig(os.path.join(blackboard.config['report']['out'], "plot_{}.svg".format(sys.argv[2])))
+    plt.savefig(os.path.join(blackboard.config['report']['out'], "plot_{}_{}.svg".format(fname.rsplit("/", 1)[-1], sys.argv[2])))
