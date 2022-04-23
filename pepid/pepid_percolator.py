@@ -7,19 +7,20 @@ import datetime
 import subprocess
 import re
 
-ALL_FEATS = set(["dM", "MIT", "MHT", "mScore",
-                        "peptideLength", "z1", "z2",
-                        "z4", "z7", "isoDM",
-                        "isoDMppm", "isoDmz",
-                        "12C", "mc0", "mc1", "mc2",
-                        'varmods',
-                        'varmodsCount', 'totInt',
-                       'intMatchedTot',
-                        'relIntMatchedTot', 'RMS',
-                        'RMSppm',
-                        'meanAbsFragDa', 'meanAbsFragPPM',
-                        'expMass', 'calcMass',
-                        'rawscore'])
+#ALL_FEATS = set(["dM", "MIT", "MHT", "mScore",
+#                        "peptideLength", "z1", "z2",
+#                        "z4", "z7", "isoDM",
+#                        "isoDMppm", "isoDmz",
+#                        "12C", "mc0", "mc1", "mc2",
+#                        'varmods',
+#                        'varmodsCount', 'totInt',
+#                       'intMatchedTot',
+#                        'relIntMatchedTot', 'RMS',
+#                        'RMSppm',
+#                        'meanAbsFragDa', 'meanAbsFragPPM',
+#                        'expMass', 'calcMass',
+#                        'rawscore'])
+FEATS_BLACKLIST = set(["seq", "modseq", "title", "desc", "decoy"])
 
 def count_spectra(f):
     titles = {}
@@ -31,48 +32,39 @@ def count_spectra(f):
 
     return len(titles)
 
-def pout_to_tsv(pout, scores_in):
-    process = False
+def pout_to_tsv(psmout, psmout_decoys, scores_in):
     scores = {}
-    for l in pout:
-        l = l.strip()
-        if not process:
-            if l.startswith("<psms>"):
-                process = True
-            continue
-        else:
-            if l.startswith("</psms>"):
-                break
-            else:
-                if l.startswith("<psm "):
-                    title = re.sub(r"^.*p:psm_id=\"(.*)\" p:decoy=.*$", r"\1", l)
-                elif l.startswith("<svm_score>"):
-                    score = re.sub(r"^<svm_score>(.*)</svm_score>$", r"\1", l)
-                elif l.startswith("<peptide_seq "):
-                    seq = re.sub(r"^<peptide_seq n=\"\.\" c=\"\.\" seq=\"(.*)\"/>$", r"\1", l)
-                    if title not in scores:
-                        scores[title] = {}
-                    scores[title][seq] = score
-                else:
-                    continue
+    for which in [psmout, psmout_decoys]:
+        for il, l in enumerate(which):
+            l = l.strip()
+            if il == 0:
+                header = l.split("\t")
+                continue
 
-    cnt = 0
-    for il, l in enumerate(scores_in):
-        if il == 0:
-            header = l.strip().split("\t")
-            score_idx = header.index("score")
-            title_idx = header.index('title')
-            seq_idx = header.index('modseq')
-        else:
-            line = l.strip().split("\t")
-            title = line[title_idx]
-            seq = line[seq_idx]
-            if (title not in scores) or (seq not in scores[title]):
-                print("MISSING: {} {}".format(title, seq))
+            fields = l.split("\t")
+            title = fields[header.index("PSMId")]
+            score = fields[header.index("score")]
+            seq = fields[header.index("peptide")][1:-1]
+
+            if title not in scores:
+                scores[title] = {}
+            scores[title][seq] = score
+
+        scores_in.seek(0)
+        for il, l in enumerate(scores_in):
+            if il == 0:
+                header = l.strip().split("\t")
+                score_idx = header.index("score")
+                title_idx = header.index('title')
+                seq_idx = header.index('modseq')
             else:
-                cnt += 1
-                print(cnt)
-                yield line[:score_idx] + [scores[title][seq]] + line[score_idx+1:]
+                line = l.strip().split("\t")
+                title = line[title_idx]
+                seq = line[seq_idx]
+                if (title not in scores) or (seq not in scores[title]):
+                    pass
+                else:
+                    yield line[:score_idx] + [scores[title][seq]] + line[score_idx+1:]
 
 def generate_pin(fin, pin):
     n = count_spectra(fin)
@@ -91,7 +83,10 @@ def generate_pin(fin, pin):
 
     seqs = []
     descs = []
+    titles = []
     #scores = []
+
+    max_scores = blackboard.config['rescoring'].getint('max scores')
 
     def step(db_pre, idx):
         conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, db_pre + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
@@ -100,22 +95,50 @@ def generate_pin(fin, pin):
         metas = cur.fetchall()
         metas = numpy.array([m[1] for m in metas])[numpy.argsort([m[0] for m in metas])]
 
+        scores = {}
+        parsed_metas = []
+
         for i, m in enumerate(metas):
             #meta = eval(m)
-            meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
+            #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
+            #numpy.minimum(numpy.finfo(numpy.float32).max, 
+            parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
+            if 'rawscore' in parsed_metas[-1]: # XXX: HACK for comet-like deltLCn feature should depend on config...
+                if titles[i] not in scores:
+                    scores[titles[i]] = []
+                scores[titles[i]].append(parsed_metas[-1]['rawscore'])
+                parsed_metas[-1]['deltLCn'] = 0
+
+        for i, m in enumerate(parsed_metas):
+            #meta = eval(m)
+            #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
+            m['deltLCn'] = (m['rawscore'] - numpy.min(scores[titles[i]])) / (m['rawscore'] if m['rawscore'] != 0 else 1)
+            meta = m
+
             nonlocal feats
+
+            extraFeats = ""
+            extraVals = ""
+            if 'expMass' in meta and 'calcMass' in meta:
+                extraFeats = "ExpMass\tCalcMass\t" 
+                extraVals = "\t{}\t{}".format(meta['expMass'], meta['calcMass'])
+
             if feats is None:
                 feats = list(meta.keys())
-                pin.write("PSMId\tLabel\tScanNr\t{}\tPeptide\tProteins\n".format("\t".join(feats)))
+                pin.write("PSMId\tLabel\tScanNr\t{}{}\tPeptide\tProteins\n".format(extraFeats, "\t".join(feats)))
 
-            pin.write("{}\t{}\t{}".format(title, (1 - descs[i].startswith(decoy_prefix)) * 2 - 1, idx + i))
+            pin.write("{}\t{}\t{}{}".format(titles[i], (1 - descs[i].startswith(decoy_prefix)) * 2 - 1, idx + i, extraVals))
+
             for k in feats:
                 pin.write("\t{}".format(numpy.format_float_positional(meta[k], trim='0')))
             #print(len(seqs), len(descs), len(db_rows), len(metas), i)
-            pin.write("\t{}\t{}\n".format("." + seqs[i] + ".", descs[i]))
+            pin.write("\t{}\t{}\n".format("-." + seqs[i] + ".-", descs[i]))
 
     start_time = datetime.datetime.now()
     idx = 0
+    title_cnt = 0
+    dont_skip = True
+
     for il, l in enumerate(fin): # tqdm seems to be broken here for some reason... caveman mode engaged
         sl = l.strip().split("\t")
         db_pre = sl[header.index('file')]
@@ -127,6 +150,10 @@ def generate_pin(fin, pin):
             if prev_title is not None:
                 cnt += 1
             prev_title = title
+            title_cnt = 0
+            dont_skip = True
+
+        title_cnt += 1
 
         if db_pre != prev_db:
             prev_db = db_pre
@@ -143,11 +170,16 @@ def generate_pin(fin, pin):
             seqs = []
             descs = []
             db_rows = []
+            titles = []
             #scores = []
 
-        db_rows.append(int(sl[header.index('rrow')]))
-        descs.append(desc)
-        seqs.append(sl[3])
+        if dont_skip:
+            db_rows.append(int(sl[header.index('rrow')]))
+            descs.append(desc)
+            seqs.append(sl[3])
+            titles.append(title)
+            if title_cnt >= max_scores:
+                dont_skip = False
         #scores.append(score)
 
     step(db_pre, idx)
@@ -174,8 +206,8 @@ def rescore(f):
         pin_f.close()
     blackboard.LOG.info("Running percolator...")
     log_level = blackboard.config['logging']['level'].lower()
-    #proc = subprocess.Popen([blackboard.config['percolator']['percolator'], pin_name, "-X", pout_name, "-Z", "-r", pepout_name, "-m", psmout_name, "--trainFDR", "0.1", "--testFDR", "0.1", "-v", "0" if log_level in ['fatal', 'error', 'warning'] else "2" if log_level in ['info'] else "2"])
-    proc = subprocess.Popen([blackboard.config['percolator']['percolator'], pin_name, "-X", pout_name, "-Z", "-r", pepout_name, "-m", psmout_name, "-M", psmdout_name, "--trainFDR", "0.2", "--testFDR", "0.2", "-v", "0" if log_level in ['fatal', 'error', 'warning'] else "2" if log_level in ['info'] else "2"])
+    extra_args = blackboard.config['percolator']['options'].split(" ")
+    proc = subprocess.Popen([blackboard.config['percolator']['percolator'], pin_name, "-X", pout_name, "-Z", "-r", pepout_name, "-m", psmout_name, "-M", psmdout_name, "-v", "0" if log_level in ['fatal', 'error', 'warning'] else "2" if log_level in ['info'] else "2"] + (extra_args if len(extra_args) > 0 else []))
     while True:
         ret = proc.poll()
         if ret is not None:
@@ -183,7 +215,7 @@ def rescore(f):
 
     blackboard.LOG.info("Percolator done; converting results to tsv...")
     f.seek(0)
-    for l in pout_to_tsv(open(pout_name, "r"), f):
+    for l in pout_to_tsv(open(psmout_name, "r"), open(psmdout_name, 'r'), f):
         yield l
 
     if(blackboard.config['percolator'].getboolean('cleanup')):

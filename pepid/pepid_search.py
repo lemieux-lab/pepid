@@ -244,11 +244,27 @@ def run():
                 batch_size = blackboard.config['processing.db'].getint('batch size')
                 n_db = db.count_db()
                 n_db_batches = math.ceil(n_db / batch_size)
+
+                dbspecs = []
+
+                # Have to use 2 separate steps to ensure that if there are overlaps, the decoys are dropped
+                # The protein-reverse approach generates quite a few overlaps...
                 dbspec = [("db_node.py", dbnodes, n_db_batches,
                                             [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), "$".encode("utf-8")) for b in range(n_db_batches)],
+                                            [struct.pack("!cQQI6sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 6, "normal".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
                                             [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
-                proc_spec = proc_spec + dbspec
+                dbspecs.append(dbspec)
+
+                if blackboard.config['processing.db'].getboolean('generate decoys'):
+                    dbdecoy_spec = [("db_node.py", dbnodes, n_db_batches,
+                                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                                                [struct.pack("!cQQI5sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 5, "decoy".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
+                                                [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
+                    dbspecs.append(dbdecoy_spec)
+
+                proc_spec = proc_spec
+                for spec in dbspecs:
+                    proc_spec = proc_spec + spec
 
             if (blackboard.config['processing.query'].getboolean('enabled') and blackboard.config['postprocessing'].getboolean('queries')) or blackboard.config['scoring'].getboolean('enabled'):
                 n_queries = queries.count_queries()

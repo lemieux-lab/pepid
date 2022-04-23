@@ -33,10 +33,7 @@ def tda_fdr(rescored=False):
                 import sys
                 sys.stderr.write("During report: ERR: {}\n".format(l))
                 sys.exit(-1)
-            if not rescored:
-                score = float(score)
-            else:
-                score = float(score_parts.split("\t")[1])
+            score = float(score)
             if not math.isinf(score):
                 data.append((title, score, desc.startswith(decoy_prefix)))
 
@@ -82,13 +79,23 @@ def tda_fdr(rescored=False):
         fdr_levels = numpy.array([0])
         fdr_index = numpy.array([0])
 
-    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max()))
+    best_fdr_idx = -1
+    for i, fv in enumerate(fdr_levels):
+        if fv <= 0.01:
+            best_fdr_idx = i
+        else:
+            break
+    psm_at_1 = 0
+    if best_fdr_idx >= 0:
+       psm_at_1 = fdr_index[best_fdr_idx] 
+
+    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}; PSM@1%: {}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max(), psm_at_1))
 
     return len(grouped_data), fdr, numpy.array(list(zip(fdr_levels, fdr_index)))
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        blackboard.LOG.error("USAGE: {} config.cfg [output|rescored]".format(sys.argv[0]))
+        sys.stderr.write("USAGE: {} config.cfg [output|rescored]\b".format(sys.argv[0]))
         sys.exit(1)
 
     blackboard.config.read("data/default.cfg")
@@ -96,7 +103,7 @@ if __name__ == "__main__":
 
     blackboard.setup_constants()
 
-    n_data, fdr, curve = tda_fdr()
+    n_data, fdr, curve = tda_fdr(sys.argv[2].strip().lower() == 'rescored')
     fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
 
     plt.title("Peptide Discovery vs FDR Threshold for {} ({})".format(sys.argv[1], sys.argv[2]))

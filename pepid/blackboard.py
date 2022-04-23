@@ -53,6 +53,9 @@ def insert_dict_str(table_name, table_cols):
 def insert_dict_extra_str(table_name, table_cols, extra):
     return "INSERT INTO {} ({}) VALUES ({}) {};".format(table_name, ",".join(table_cols), ",".join([":" + x for x in table_cols]), extra)
 
+def maybe_insert_dict_extra_str(table_name, table_cols, extra):
+    return "INSERT OR IGNORE INTO {} ({}) VALUES ({}) {};".format(table_name, ",".join(table_cols), ",".join([":" + x for x in table_cols]), extra)
+
 def maybe_insert_str(table_name, table_cols):
     return "INSERT OR IGNORE INTO {} ({}) VALUES ({});".format(table_name, ",".join(table_cols), ",".join(["?"]*len(table_cols)))
 
@@ -154,8 +157,8 @@ def setup_constants():
     META_COLS = ["qrow", "candrow", "data", "score", "rrow"] # score is used to mirror insertion exclusion via CHECK(score > 0) from the 'data' db
     META_TYPES = ["INTEGER", "INTEGER", "TEXT", "REAL", "INTEGER"]
 
-    DB_COLS = ["desc", "rt", "length", "mass", "seq", "mods", "spec", "meta"]
-    DB_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM", "META"]
+    DB_COLS = ["desc", "decoy", "rt", "length", "mass", "seq", "mods", "spec", "meta"]
+    DB_TYPES = ["TEXT", "INTEGER", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM", "META"]
 
     QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
     QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL", "META"]

@@ -10,15 +10,18 @@ class DbNode(node.Node):
         super().__init__(unix_sock)
         self.path = None
         self.messages[0x00] = [None, self.prepare]
-        self.messages[0x01] = ["!QQc", self.do]
+        self.messages[0x01] = [None, self.do]
         self.messages[0x02] = ["!QQc", self.do_post]
 
-    def do(self, start, end, _):
+    def do(self, msg):
+        start, end = struct.unpack("!QQ", msg[:16])
         import db
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
-        db.fill_db(start, end)
+        # leftover msg = decoy or normal
+        lgt = struct.unpack("!I", msg[16:20])[0]
+        db.fill_db(start, end, struct.unpack("!{}sc".format(lgt), msg[20:])[0].decode('utf-8'))
         blackboard.CONN.commit()
 
     def do_post(self, start, end, _):

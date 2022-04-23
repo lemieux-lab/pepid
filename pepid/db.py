@@ -169,63 +169,68 @@ def user_processing(start, end):
     blackboard.commit()
 
 def process_entry(description, buff, settings):
+    return process_entry_core(description, buff, settings, 'normal')
+
+def process_entry_decoy(description, buff, settings):
+    return process_entry_core(description, buff, settings, 'decoy')
+
+def process_entry_core(description, buff, settings, seq_type):
     data = []
     if len(buff) > 0:
-        for seq_type in settings.seq_types:
-            if seq_type == 'decoy':
-                if settings.decoy_method == 'reverse':
-                    buff = buff[::-1]
-                else:
-                    buff = list(buff)
-                    random.shuffle(buff)
-                    buff = "".join(buff)
-                description = settings.decoy_prefix + description
+        if seq_type == 'decoy':
+            if settings.decoy_method == 'reverse':
+                buff = buff[::-1]
+            else:
+                buff = list(buff)
+                random.shuffle(buff)
+                buff = "".join(buff)
+            description = settings.decoy_prefix + description
 
-            peps = [x.group(0) for x in re.finditer(settings.digestion_regex, buff)]
-            first_pep = peps[0] if len(peps) > 0 else None
-            if first_pep is None:
+        peps = [x.group(0) for x in re.finditer(settings.digestion_regex, buff)]
+
+        basic_peps_len = len(peps)
+        if basic_peps_len == 0:
+            return []
+
+        if settings.cleaves > 0:
+            for c in range(1, settings.cleaves+1):
+                for i in range(basic_peps_len-c):
+                    these_peps = [peps[i]]
+                    if i == 0 and peps[i][0] == 'M':
+                        for x in range(1, len(peps)):
+                            these_peps.append(peps[i][x:])
+                    for pep in these_peps:
+                        for j in range(1, c+1):
+                            pep = pep + peps[i+j]
+                        if settings.min_lgt <= len(pep) <= settings.max_lgt:
+                            peps.append(pep)
+
+        peps = list(filter(lambda x: settings.min_lgt <= len(x) <= settings.max_lgt, peps))
+        peps = numpy.unique(peps)
+
+        for j in range(len(peps)):
+            if any([aa not in pepid_utils.AMINOS for aa in peps[j]]):
                 continue
-
-            basic_peps_len = len(peps)
-            if settings.cleaves > 0:
-                for c in range(1, settings.cleaves+1):
-                    for i in range(basic_peps_len-c):
-                        these_peps = [peps[i]]
-                        if i == 0 and peps[i][0] == 'M':
-                            for x in range(1, len(peps)):
-                                these_peps.append(peps[i][x:])
-                        for pep in these_peps:
-                            for j in range(1, c+1):
-                                pep = pep + peps[i+j]
-                            if settings.min_lgt <= len(pep) <= settings.max_lgt:
-                                peps.append(pep)
-
-            peps = list(filter(lambda x: settings.min_lgt <= len(x) <= settings.max_lgt, peps))
-            peps = numpy.unique(peps)
-
-            for j in range(len(peps)):
-                if any([aa not in pepid_utils.AMINOS for aa in peps[j]]):
-                    continue
-                mods = [(sum(settings.fixed_mods[p]) if p in settings.fixed_mods else 0) for p in peps[j]]
-                var_list = [(0, mods)]
-                for nmods in range(settings.max_vars):
-                    for iv in range(len(var_list)):
-                        curr_nmods = var_list[iv][0]
-                        if curr_nmods == nmods:
-                            curr_mods = var_list[iv][1]
-                            for mod in list(settings.var_mods.keys()):
-                                for iaa, (aa, m) in enumerate(zip(peps[j], curr_mods)):
-                                    if aa == mod and m == 0:
-                                        var_list.append((curr_nmods+1, curr_mods[:iaa] + [sum(settings.var_mods[mod])] + curr_mods[iaa+1:]))
-                      
-                var_set = set(map(lambda x: tuple(x[1]), var_list)) # can't use lists in sets......
-                for var in var_set:
-                    mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
-                    if settings.min_mass <= mass <= settings.max_mass:
-                        data.append({"id": peps[j] + ":" + str(var), "desc": description.split(" ", 1)[0], "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
+            mods = [(sum(settings.fixed_mods[p]) if p in settings.fixed_mods else 0) for p in peps[j]]
+            var_list = [(0, mods)]
+            for nmods in range(settings.max_vars):
+                for iv in range(len(var_list)):
+                    curr_nmods = var_list[iv][0]
+                    if curr_nmods == nmods:
+                        curr_mods = var_list[iv][1]
+                        for mod in list(settings.var_mods.keys()):
+                            for iaa, (aa, m) in enumerate(zip(peps[j], curr_mods)):
+                                if aa == mod and m == 0:
+                                    var_list.append((curr_nmods+1, curr_mods[:iaa] + [sum(settings.var_mods[mod])] + curr_mods[iaa+1:]))
+                  
+            var_set = set(map(lambda x: tuple(x[1]), var_list)) # can't use lists in sets......
+            for var in var_set:
+                mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
+                if settings.min_mass <= mass <= settings.max_mass:
+                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
     return data
 
-def fill_db(start, end):
+def fill_db(start, end, seq_type):
     """
     Processes database entries, performing digestion and generating variable mods as needed.
     Also applies config-specified mass and length filtering.
@@ -236,6 +241,10 @@ def fill_db(start, end):
 
     batch_size = blackboard.config['processing.db'].getint('batch size')
     input_file = open(blackboard.config['data']['database'])
+    if seq_type == 'decoy':
+        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['decoy protein precessing function'], process_entry_decoy)
+    else:
+        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['protein precessing function'], process_entry)
 
     settings = DbSettings()
     settings.load_settings()
@@ -245,10 +254,12 @@ def fill_db(start, end):
     description = ""
     entry_id = -1
     data = []
+
+    input_file.seek(0)
     for l in input_file:
         if l[0] == ">":
             if start <= entry_id < end:
-                peps = process_entry(desc, buff, settings)
+                peps = process_protein_fn(desc, buff, settings)
                 data.extend(peps)
                        
             desc = l[1:].strip()
@@ -259,12 +270,12 @@ def fill_db(start, end):
             if entry_id >= end:
                 break
     if entry_id < end:
-        peps = process_entry(desc, buff, settings)
+        peps = process_protein_fn(desc, buff, settings)
         data.extend(peps)
 
     cur = blackboard.CONN.cursor()
 
-    blackboard.executemany(cur, blackboard.insert_dict_extra_str("candidates", blackboard.DB_COLS, "ON CONFLICT(seq, mods) DO UPDATE SET desc=desc || ';' || excluded.desc"), data)
+    blackboard.executemany(cur, blackboard.maybe_insert_dict_extra_str("candidates", blackboard.DB_COLS, "ON CONFLICT(seq, mods, decoy) DO UPDATE SET desc=desc || ';' || excluded.desc"), data)
     cur.close()
     blackboard.commit()
 
@@ -276,6 +287,6 @@ def prepare_db():
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, "DROP INDEX IF EXISTS cand_mass_idx;")
     blackboard.execute(cur, "DROP TABLE IF EXISTS candidates;")
-    blackboard.execute(cur, blackboard.create_table_str("c.candidates", blackboard.DB_COLS, blackboard.DB_TYPES, extra=["UNIQUE(seq, mods)"]))
+    blackboard.execute(cur, blackboard.create_table_str("c.candidates", blackboard.DB_COLS, blackboard.DB_TYPES, extra=["UNIQUE(seq, mods, decoy)", "UNIQUE(seq, mods)"]))
     cur.close()
     blackboard.commit()
