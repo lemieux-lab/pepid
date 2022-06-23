@@ -95,7 +95,7 @@ def tda_fdr(rescored=False):
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        sys.stderr.write("USAGE: {} config.cfg [output|rescored]\b".format(sys.argv[0]))
+        sys.stderr.write("USAGE: {} config.cfg [output|rescored]\n".format(sys.argv[0]))
         sys.exit(1)
 
     blackboard.config.read("data/default.cfg")

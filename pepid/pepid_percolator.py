@@ -44,7 +44,7 @@ def pout_to_tsv(psmout, psmout_decoys, scores_in):
             fields = l.split("\t")
             title = fields[header.index("PSMId")]
             score = fields[header.index("score")]
-            seq = fields[header.index("peptide")][1:-1]
+            seq = fields[header.index("peptide")][2:-2]
 
             if title not in scores:
                 scores[title] = {}
@@ -78,9 +78,9 @@ def generate_pin(fin, pin):
 
     prev_db = None
     prev_title = None
-    db_rows = []
     cnt = 0
 
+    db_rows = []
     seqs = []
     descs = []
     titles = []
@@ -91,9 +91,13 @@ def generate_pin(fin, pin):
     def step(db_pre, idx):
         conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, db_pre + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
         cur = conn.cursor()
-        cur.execute("SELECT rrow, data FROM meta WHERE rrow in ({});".format(",".join(list(map(str, db_rows)))))
+        cur.execute("SELECT data FROM meta WHERE rrow in ({}) ORDER BY rrow;".format(",".join(list(map(str, db_rows)))))
         metas = cur.fetchall()
-        metas = numpy.array([m[1] for m in metas])[numpy.argsort([m[0] for m in metas])]
+        reidx = numpy.argsort(db_rows)
+        metas_sorted = [0] * len(metas)
+        for imeta, meta in enumerate(metas):
+            metas_sorted[reidx[imeta]] = meta[0]
+        metas = metas_sorted
 
         scores = {}
         parsed_metas = []
@@ -102,6 +106,7 @@ def generate_pin(fin, pin):
             #meta = eval(m)
             #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
             #numpy.minimum(numpy.finfo(numpy.float32).max, 
+            # The below is notably faster than eval() (about 2x here)
             parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
             if 'rawscore' in parsed_metas[-1]: # XXX: HACK for comet-like deltLCn feature should depend on config...
                 if titles[i] not in scores:
@@ -109,10 +114,13 @@ def generate_pin(fin, pin):
                 scores[titles[i]].append(parsed_metas[-1]['rawscore'])
                 parsed_metas[-1]['deltLCn'] = 0
 
-        for i, m in enumerate(parsed_metas):
-            #meta = eval(m)
-            #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
-            m['deltLCn'] = (m['rawscore'] - numpy.min(scores[titles[i]])) / (m['rawscore'] if m['rawscore'] != 0 else 1)
+        i = -1
+        seen = set()
+        for j, m in enumerate(parsed_metas):
+            if titles[j] not in seen:
+                i += 1
+            if 'rawscore' in m:
+                m['deltLCn'] = (m['rawscore'] - numpy.min(scores[titles[j]])) / (m['rawscore'] if m['rawscore'] != 0 else 1)
             meta = m
 
             nonlocal feats
@@ -127,12 +135,13 @@ def generate_pin(fin, pin):
                 feats = list(meta.keys())
                 pin.write("PSMId\tLabel\tScanNr\t{}{}\tPeptide\tProteins\n".format(extraFeats, "\t".join(feats)))
 
-            pin.write("{}\t{}\t{}{}".format(titles[i], (1 - descs[i].startswith(decoy_prefix)) * 2 - 1, idx + i, extraVals))
+            pin.write("{}\t{}\t{}{}".format(titles[j], (1 - descs[j].startswith(decoy_prefix)) * 2 - 1, idx + i + 1, extraVals))
+
+            seen.add(titles[j])
 
             for k in feats:
                 pin.write("\t{}".format(numpy.format_float_positional(meta[k], trim='0')))
-            #print(len(seqs), len(descs), len(db_rows), len(metas), i)
-            pin.write("\t{}\t{}\n".format("-." + seqs[i] + ".-", descs[i]))
+            pin.write("\t{}\t{}\n".format("-." + seqs[j] + ".-", descs[j]))
 
     start_time = datetime.datetime.now()
     idx = 0
@@ -142,8 +151,8 @@ def generate_pin(fin, pin):
     for il, l in enumerate(fin): # tqdm seems to be broken here for some reason... caveman mode engaged
         sl = l.strip().split("\t")
         db_pre = sl[header.index('file')]
-        title = sl[0]
-        desc = sl[1]
+        title = sl[header.index('title')]
+        desc = sl[header.index('desc')]
         #score = float(sl[header.index('score')])
 
         if title != prev_title:
@@ -156,17 +165,13 @@ def generate_pin(fin, pin):
         title_cnt += 1
 
         if db_pre != prev_db:
-            prev_db = db_pre
             if len(db_rows) != 0:
-                #idxs = numpy.argsort(scores)[::-1]
-                #seqs = numpy.array(seqs)[idxs]
-                #db_rows = numpy.array(db_rows)[idxs]
-                #descs = numpy.array(descs)[idxs]
-                step(db_pre, idx)
-                idx += len(db_rows)
+                step(prev_db, idx)
+                idx += len(numpy.unique(titles))
                 if log_level in ['debug', 'info']:
                     elapsed = datetime.datetime.now() - start_time
                     print("{}/{} ({}>{})".format(cnt, n, elapsed, (elapsed / (cnt / n)) - elapsed))
+            prev_db = db_pre
             seqs = []
             descs = []
             db_rows = []
@@ -176,7 +181,7 @@ def generate_pin(fin, pin):
         if dont_skip:
             db_rows.append(int(sl[header.index('rrow')]))
             descs.append(desc)
-            seqs.append(sl[3])
+            seqs.append(sl[header.index('modseq')])
             titles.append(title)
             if title_cnt >= max_scores:
                 dont_skip = False

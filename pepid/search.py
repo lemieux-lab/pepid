@@ -151,7 +151,7 @@ def identipy_rnhs(cands, q):
             ret.append({"dM": (c['mass'] - q[i]['mass']) / c['mass'],
                         "absdM": abs((c['mass'] - q[i]['mass']) / c['mass']),
                         "peplen": len(c['seq']),
-                        "ionFrac": total_matched / len(masks),
+                        "ionFrac": total_matched / sum(map(len, masks)),
                         #'relIntTotMatch': sumI / norm,
                         'charge': int(q[i]['charge']),
                         'z2': int(q[i]['charge'] == 2),
@@ -230,7 +230,8 @@ def search_core(start, end):
                 blackboard.executemany(m_cur, blackboard.maybe_insert_dict_str("meta", blackboard.META_COLS), metar)
                 #blackboard.META_CONN.commit()
                 rrow += len(res)
-    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_score_qrow_idx ON results (qrow ASC, score DESC);")
+    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
+    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
     blackboard.execute(m_cur, "CREATE INDEX IF NOT EXISTS m_rrow_idx ON meta (rrow ASC);")
     blackboard.RES_CONN.commit()
     blackboard.META_CONN.commit()

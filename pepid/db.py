@@ -242,9 +242,9 @@ def fill_db(start, end, seq_type):
     batch_size = blackboard.config['processing.db'].getint('batch size')
     input_file = open(blackboard.config['data']['database'])
     if seq_type == 'decoy':
-        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['decoy protein precessing function'], process_entry_decoy)
+        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['decoy protein processing function'], process_entry_decoy)
     else:
-        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['protein precessing function'], process_entry)
+        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['protein processing function'], process_entry)
 
     settings = DbSettings()
     settings.load_settings()

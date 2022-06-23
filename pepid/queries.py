@@ -52,7 +52,7 @@ def fill_queries(start, end):
             if l[:len("TITLE=")] == "TITLE=":
                 title = l[len("TITLE="):].strip()
             elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
-                rt = int(l[len("RTINSECONDS="):].strip())
+                rt = float(l[len("RTINSECONDS="):].strip())
             elif l[:len("CHARGE=")] == "CHARGE=":
                 charge = int(l[len("CHARGE="):].strip().replace("+", ""))
             elif l[:len("PEPMASS=")] == "PEPMASS=":
