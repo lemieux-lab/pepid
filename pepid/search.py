@@ -143,22 +143,8 @@ def search_core(start, end):
     parses and applies the user scoring function from the config.
     The function should take two arguments: a list of candidates, and a query.
 
-    A query is a dictionary with the following keys:
-    title: query title
-    rt: retention time in seconds
-    charge: precursor charge
-    mass: precursor mass
-    meta: user metadata (see fill_queries in queries.py)
-    spec: N x 2 list representing spectrum ([[mz, intensity], ...])
-
-    Each candidate is a dictionary with the following keys:
-    description: sequence description from the database for the protein from which the peptide was generated
-    sequence: the peptide sequence
-    mods: an array of floating point numbers containing mass offsets for each amino acid
-    rt: retention time in seconds
-    length: length of the peptide sequence
-    mass: calculated sequence mass
-    spec: N x 2 list representing predicted sequence spectrum ([[mz, intensity], ...])
+    Candidates and queries are rows as saved in the DB, whose description can be found
+    in `blackboard.py`.
     """
 
     tol = blackboard.config['scoring'].getfloat('peak matching tolerance')

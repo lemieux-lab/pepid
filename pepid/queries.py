@@ -11,6 +11,7 @@ def count_queries():
     """
     Opens the file speficied in config and counts how many spectra are present.
     """
+
     f = open(blackboard.config['data']['queries'], 'r')
     cnt = 0
     for l in f:
@@ -89,12 +90,8 @@ def user_processing(start, end):
     The user function should accept a batch of queries and return a batch of metadata, which are
     inserted in the database for the corresponding input query.
 
-    The keys for the query dictionary received by the user function are:
-    title: query title
-    rt: retention time in seconds
-    charge: precursor charge
-    mass: precursor neutral mass
-    spec: a N x 2 list representing the spectrum ([[mz, intensity] ...])
+    The query object is a database row, which functions similarly to a database and whose
+    keys are as defined in `blackboard.py`
 
     The output metadata object should be anything such that eval(expr(metadata)) == metadata, where == is defined
     in the sense of the user scoring function (metadata is not otherwise consulted).

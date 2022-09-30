@@ -60,6 +60,7 @@ def handle_nodes(title, node_specs, tqdm_silence=False):
     Launches and monitors a set of nodes.
     Node-spec is [(node script, node count, n batches, [init msgs], [task msgs], [end msg]), ...]
     """
+
     node_ids = [[str(uuid.uuid4()) for _ in range(n[1])] for n in node_specs]
     nodes = [[subprocess.Popen([blackboard.config['performance']['python']] + [node_spec[0], u] + ([cfg_file] if cfg_file is not None else [])) for u in node_id] for node_spec, node_id in zip(node_specs, node_ids)]
     
