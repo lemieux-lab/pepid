@@ -38,19 +38,6 @@ def identipy_rnhs(cands, q):
 
     style = blackboard.config['rnhs']['feature style']
 
-    #if style != 'mascot':
-    #    max_mz = 5000
-    #    bin_mult = 50
-
-    #    spec_blit = numpy.zeros((max_mz * bin_mult,))
-
-    #    for im, iv in numpy.asarray(q[0]['spec'].data): # XXX hack since we know we always receive the same q...
-    #        if im >= max_mz:
-    #            break
-    #        spec_blit[int(im * bin_mult)] = iv
-    #    spec_blit = numpy.sqrt(spec_blit)
-    #    spec_blit = spec_blit / spec_blit.max()
-
     for i in range(len(cands)):
         spectrum = numpy.asarray(q[i]['spec'].data)
         mz_array = spectrum[:,0]
@@ -59,19 +46,6 @@ def identipy_rnhs(cands, q):
         charge = q[i]['charge']
         qmass = q[i]['mass']
         c = cands[i]
-
-        #if style != 'mascot':
-        #    xcorr = 0
-        #    th_blit = numpy.zeros((max_mz * bin_mult,))
-
-        #    for sub_spec in c['spec'].data:
-        #        for im in sub_spec:
-        #            if im >= max_mz:
-        #                break
-        #            th_blit[int(im * bin_mult)] = 1
-
-        #    # Required to avoid passing over RLIMIT_NPROC if using sufficiently many parallel processes
-        #    xcorr = (scipy.signal.correlate(th_blit, spec_blit, mode='full')[len(th_blit) - 75 * bin_mult : len(th_blit) + 75 * bin_mult]).sum() / 150
 
         acc_ppm = blackboard.config['scoring']['matching unit'] == 'ppm'
         acc = blackboard.config['scoring'].getfloat('peak matching tolerance')
@@ -118,8 +92,6 @@ def identipy_rnhs(cands, q):
         for m in mult:
             score *= m
         logsumI = numpy.log10(sumI)
-
-        #ret.append({'score': score, 'theoretical': theoretical, 'spec': mz_array.tolist(), 'sumI': logsumI, 'dist': dist.tolist(), 'total_matched': total_matched, 'title': q[i]['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(c['seq'], c['mods'])])})
 
         if style == 'mascot':
             ret.append({"dM": c['mass'] - q[i]['mass'], #"MIT": mascot_t, "MHT": mascot_t, "mScore": mascot
@@ -219,16 +191,11 @@ def search_core(start, end):
             all_q = [q] * len(cands)
 
             res = scoring_fn(cands, all_q)
-            #r = [{'data': str({'cand_id': c['rowid'], 'query_id': q['rowid'], 'cand_mass': c['mass'], 'cand_seq': c['seq'], 'cand_mods': c['mods'], 'query_mass': q['mass'], 'query_charge': q['charge'], 'total_matched': r['total_matched'], 'sumI': r['sumI']}), 'qrow': q['rowid'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
-
-            #r = [{'data': str(r), 'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq']} for r, c in zip(res, cands)]
             r = [{'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': q['charge'], 'query_mass': q['mass'], 'cand_mass': c['mass'], 'rrow': rrow + ii, 'file': fname_prefix} for ii, (r, c) in enumerate(zip(res, cands)) if r['score'] > 0]
             if len(r) > 0:
                 blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), r)
-                #blackboard.RES_CONN.commit()
                 metar = [{'score': r['score'], 'qrow': q['rowid'], 'candrow': c['rowid'], 'data': str(r), "rrow": rrow + ii} for ii, (r, c) in enumerate(zip(res, cands)) if r['score'] > 0]
                 blackboard.executemany(m_cur, blackboard.maybe_insert_dict_str("meta", blackboard.META_COLS), metar)
-                #blackboard.META_CONN.commit()
                 rrow += len(res)
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")

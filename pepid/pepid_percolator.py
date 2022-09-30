@@ -105,7 +105,6 @@ def generate_pin(fin, pin):
         for i, m in enumerate(metas):
             #meta = eval(m)
             #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
-            #numpy.minimum(numpy.finfo(numpy.float32).max, 
             # The below is notably faster than eval() (about 2x here)
             parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
             if 'rawscore' in parsed_metas[-1]: # XXX: HACK for comet-like deltLCn feature should depend on config...
@@ -148,7 +147,7 @@ def generate_pin(fin, pin):
     title_cnt = 0
     dont_skip = True
 
-    for il, l in enumerate(fin): # tqdm seems to be broken here for some reason... caveman mode engaged
+    for il, l in enumerate(fin): # tqdm seems to be broken here for some reason... report performance caveman-style instead.
         sl = l.strip().split("\t")
         db_pre = sl[header.index('file')]
         title = sl[header.index('title')]
