@@ -38,6 +38,9 @@ def identipy_rnhs(cands, q):
 
     style = blackboard.config['rnhs']['feature style']
 
+    import sys
+    max_exp = sys.float_info.max_exp
+
     for i in range(len(cands)):
         spectrum = numpy.asarray(q[i]['spec'].data)
         mz_array = spectrum[:,0]
@@ -81,7 +84,8 @@ def identipy_rnhs(cands, q):
 
             if nmatched > 0:
                 total_matched += nmatched
-                mult.append(numpy.math.factorial(nmatched))
+                # Must limit to float range to avoid overflow later
+                mult.append(numpy.math.factorial(min(20, nmatched)))
                 sumI += sumi
                 score += sumi / norm
 
@@ -89,8 +93,16 @@ def identipy_rnhs(cands, q):
             ret.append({'score': 0})
             continue
 
+        score_l2 = numpy.ceil(numpy.log2(float(score)))
         for m in mult:
-            score *= m
+            # log2 explicitly requires the arg to be float if within a loop
+            m_l2 = numpy.ceil(numpy.log2(float(m)))
+            if m_l2 + score_l2 >= max_exp: # we are maxed out, bail
+                score = sys.float_info.max
+                break
+            else:
+                score *= m
+                score_l2 += m_l2
         logsumI = numpy.log10(sumI)
 
         if style == 'mascot':

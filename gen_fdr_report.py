@@ -35,7 +35,9 @@ def tda_fdr(rescored=False):
                 import sys
                 blackboard.LOG.error("During report: ERR: {}\n".format(l))
                 sys.exit(-1)
-            score = float(score)
+            score = float(fields[header.index('score')])
+            title = fields[header.index('title')]
+            desc = fields[header.index('desc')]
             if not math.isinf(score):
                 data.append((title, score, desc.startswith(decoy_prefix)))
 
@@ -62,7 +64,7 @@ def tda_fdr(rescored=False):
     data.sort(order=['score'])
     data = data[::-1]
 
-    fdr_index = numpy.cumsum(numpy.logical_not(data['decoy'])
+    fdr_index = numpy.cumsum(numpy.logical_not(data['decoy']))
     fdr_levels = numpy.cumsum(data['decoy'].astype('float32')) / numpy.maximum(1, fdr_index)
     sort_idx = numpy.argsort(fdr_levels)
     fdr_index = fdr_index[sort_idx]

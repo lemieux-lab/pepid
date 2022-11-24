@@ -30,7 +30,7 @@ def write_output():
 
     files = glob.glob(fname_path)
 
-    for f in tqdm.tqdm(files, total=len(files), desc="Dumping To CSV"):
+    for f in tqdm.tqdm(files, total=len(files), desc="Dumping To TSV"):
         while True:
             try:
                 conn = sqlite3.connect("file:{}?cache=shared".format(f), detect_types=1, uri=True, timeout=0.1)

@@ -44,6 +44,8 @@ class Node():
                             self.messages[msg[0]][1](msg[1:])
                         conn.sendall(struct.pack("!ccc", bytes([0xfe]), bytes([msg[0]]), "$".encode('utf-8')))
                     except Exception as e:
+                        import traceback
+                        print(traceback.format_exc())
                         err = "Failed to handle message {} -- {}".format(msg[0], repr(e)) 
                         conn.sendall(struct.pack("!cI{}sc".format(len(err)), bytes([0xfd]), len(err), err.encode('utf-8'), "$".encode('utf-8')))
                         if blackboard.config['logging']['level'].lower() == 'debug':
