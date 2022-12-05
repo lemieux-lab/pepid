@@ -8,6 +8,8 @@ import sys
 
 import logging
 
+import subprocess as sp
+
 LOG = None
 CONN = None
 RES_CONN = None
@@ -29,7 +31,6 @@ META_DB_FNAME = None
 DB_PATH = None
 RES_DB_PATH = None
 META_DB_PATH = None
-LOCK = None
 TMP_PATH = None
 
 # Simple wrapper to hook into the sqlite3 auto-conversion system...
@@ -250,3 +251,10 @@ def commit():
             time.sleep(0.1)
             continue
         break
+
+def subprocess(args):
+    extra_args = list(filter(lambda x: len(x) != 0, config['performance']['extra args'].strip().split(" ")))
+    args = list(filter(lambda x: len(x) != 0, args))
+    payload = [config['performance']['python']] + extra_args + args
+    proc = sp.Popen(payload)
+    return proc

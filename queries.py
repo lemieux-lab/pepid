@@ -59,7 +59,7 @@ def fill_queries(start, end):
             elif l[:len("PEPMASS=")] == "PEPMASS=":
                 precmass = float(l[len("PEPMASS="):].split(maxsplit=1)[0])
             elif l[:len("END IONS")] == "END IONS":
-                precmass = (precmass * charge) - charge
+                precmass = (precmass * charge) - (charge-1)*pepid_utils.MASS_PROT - pepid_utils.MASS_PROT
                 if (min_mass <= precmass <= max_mass) and (min_charge <= charge <= max_charge):
                     data.append({k:None for k in blackboard.QUERY_COLS})
                     delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)

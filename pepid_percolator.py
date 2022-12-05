@@ -23,12 +23,14 @@ import re
 FEATS_BLACKLIST = set(["seq", "modseq", "title", "desc", "decoy"])
 
 def count_spectra(f):
-    titles = {}
-    _ = next(f)
+    titles = set()
 
-    for l in f:
-        title = l.split('\t', 1)[0]
-        titles[title] = 1
+    for il, l in enumerate(f):
+        if il == 0:
+            header = l.strip().split("\t")
+        else:
+            title = l.strip().split('\t')[header.index('qrow')]
+            titles.add(title)
 
     return len(titles)
 
@@ -146,8 +148,10 @@ def generate_pin(fin, pin):
     idx = 0
     title_cnt = 0
     dont_skip = True
+    prev_cnt = 0
 
-    for il, l in enumerate(fin): # tqdm seems to be broken here for some reason... report performance caveman-style instead.
+    progress = tqdm.tqdm(desc="Generating PIN...", total=n, disable=(log_level in ['fatal', 'error', 'warning']))
+    for il, l in enumerate(fin):
         sl = l.strip().split("\t")
         db_pre = sl[header.index('file')]
         title = sl[header.index('title')]
@@ -167,9 +171,10 @@ def generate_pin(fin, pin):
             if len(db_rows) != 0:
                 step(prev_db, idx)
                 idx += len(numpy.unique(titles))
-                if log_level in ['debug', 'info']:
-                    elapsed = datetime.datetime.now() - start_time
-                    print("{}/{} ({}>{})".format(cnt, n, elapsed, (elapsed / (cnt / n)) - elapsed))
+                elapsed = datetime.datetime.now() - start_time
+                progress.set_postfix_str("{}/{}".format(cnt, n))
+                progress.update(cnt - prev_cnt)
+                prev_cnt = cnt
             prev_db = db_pre
             seqs = []
             descs = []
@@ -186,6 +191,8 @@ def generate_pin(fin, pin):
                 dont_skip = False
         #scores.append(score)
 
+    progress.update(cnt - prev_cnt)
+    progress.close()
     step(db_pre, idx)
 
 def rescore(f):

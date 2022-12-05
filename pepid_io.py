@@ -30,6 +30,9 @@ def write_output():
 
     files = glob.glob(fname_path)
 
+    import collections
+    counts = collections.defaultdict(int)
+
     for f in tqdm.tqdm(files, total=len(files), desc="Dumping To TSV"):
         while True:
             try:
@@ -46,6 +49,7 @@ def write_output():
 
         blackboard.execute(cur, "SELECT results.rowid, {} FROM results JOIN (SELECT qrow, IFNULL((SELECT score FROM results WHERE qrow = qrows.qrow ORDER BY score DESC LIMIT 1 OFFSET ?), -1) AS cutoff_score FROM (SELECT DISTINCT qrow FROM results) AS qrows) AS cutoffs ON results.qrow = cutoffs.qrow AND results.score >= cutoffs.cutoff_score ORDER BY results.qrow ASC, results.score DESC;".format(",".join(map(lambda x: "results." + x, header))), (max_cands-1,))
         fetch_batch_size = min(batch_size, 62000) # The maximum batch size supported by the default sqlite engine is a bit more than 62000
+
         while True:
             results = cur.fetchmany(fetch_batch_size)
             if len(results) == 0:
@@ -53,11 +57,19 @@ def write_output():
 
             for idata, data in enumerate(results):
                 data = dict(data)
-                fields = []
-                for k in header:
-                    fields.append(str(data[k]).replace("\t", "    "))
-                #fields.append(str(data['rowid']))
-                outf.write("\t".join(fields) + "\n")
+                # Need this second counter because if we have more than X results with the same score
+                # we end up grabbing it all anyway. Example:
+                # scores 1 1 1 1 1 1 1 1 1 1 1 0.9 0.9 0.9 with top 10:
+                #   We end up selecting (>=) 11 1's instead of the max 10.
+                if counts[data['qrow']] >= max_cands:
+                    continue
+                else:
+                    fields = []
+                    for k in header:
+                        fields.append(str(data[k]).replace("\t", "    "))
+                    #fields.append(str(data['rowid']))
+                    outf.write("\t".join(fields) + "\n")
+                    counts[data['qrow']] += 1
         del cur
         del conn
 

@@ -1,3 +1,5 @@
 numpy
-sqlite3
 scipy
+tqdm
+uuid
+configparser

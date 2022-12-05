@@ -12,9 +12,6 @@ import copy
 import helper
 import pickle
 
-import scipy
-import scipy.sparse
-
 class DbSettings():
     def __init__(self):
         pass
@@ -40,6 +37,7 @@ class DbSettings():
         self.use_decoys = blackboard.config['processing.db'].getboolean('generate decoys')
         self.decoy_prefix = blackboard.config['processing.db']['decoy prefix']
         self.decoy_method = blackboard.config['processing.db']['decoy method']
+        self.decoy_type = blackboard.config['processing.db']['decoy type']
 
         self.seq_types = ['normal']
         if self.use_decoys:
@@ -108,6 +106,8 @@ def ml_spectrum(cands):
         out[-1] = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
     out = numpy.stack(out, axis=1)
 
+    import scipy
+    import scipy.sparse
     return [scipy.sparse.csr_matrix(x) for x in out]
 
 def theoretical_spectrum(cands):
@@ -119,13 +119,15 @@ def theoretical_spectrum(cands):
     cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
     nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
     max_charge = blackboard.config['processing.db'].getint('max charge')
+    exclude_end = blackboard.config['processing.db.theoretical_spectrum'].getboolean('exclude last aa')
+    weights = eval(blackboard.config['processing.db.theoretical_spectrum']['weights'])
 
     ret = []
 
     for cand in cands:
         seq = cand['seq']
         mod = cand['mods']
-        masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge)
+        masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge, exclude_end=exclude_end, weights=weights)
         ret.append(masses)
 
     return ret
@@ -177,16 +179,37 @@ def process_entry_decoy(description, buff, settings):
 def process_entry_core(description, buff, settings, seq_type):
     data = []
     if len(buff) > 0:
+        is_pep_reverse = is_pep_shuffle = is_pep_decoy = False
+
         if seq_type == 'decoy':
-            if settings.decoy_method == 'reverse':
-                buff = buff[::-1]
+            if settings.decoy_type == 'protein':
+                if settings.decoy_method == 'reverse':
+                    buff = buff[::-1]
+                else:
+                    buff = list(buff)
+                    random.shuffle(buff)
+                    buff = "".join(buff)
             else:
-                buff = list(buff)
-                random.shuffle(buff)
-                buff = "".join(buff)
+                is_pep_decoy = True
+                if settings.decoy_method == 'reverse':
+                    is_pep_reverse = True
+                else:
+                    is_pep_shuffle = True
+
             description = settings.decoy_prefix + description
 
-        peps = [x.group(0) for x in re.finditer(settings.digestion_regex, buff)]
+        peps = [x.group(0) for x in re.finditer(settings.digestion_regex, buff) if len(x.group(0)) > 1]
+        if is_pep_decoy:
+            # NOTE: we want to preserve last AA
+            if is_pep_reverse:
+                peps = [pep[::-1][1:] + pep[-1] for pep in peps]
+            else:
+                new_peps = []
+                for pep in peps:
+                    new = list(pep[:-1])
+                    random.shuffle(nnew)
+                    new_peps.append("".join(new) + pep[-1])
+                peps = new_peps
 
         basic_peps_len = len(peps)
         if basic_peps_len == 0:
