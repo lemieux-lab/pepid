@@ -122,14 +122,15 @@ def plot_report(stats, fdr_limit, index=0, fig_axs=None):
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
 
-    color_one = "C{}".format(index*2)
-    color_two = "C{}".format(index*2+1)
+    color_targets = "C{}".format(index*3)
+    color_decoys = "C{}".format(index*3+1)
+    color_all = "C{}".format(index*3+2)
 
     from matplotlib.lines import Line2D
-    leg_lines = [Line2D([0], [0], color=color_one, label="Run {} (All/Targets)".format(index+1)), Line2D([0], [0], color=color_two, label="Run {} (Decoys)".format(index+1))]
+    leg_lines = [Line2D([0], [0], color=color_all, label="Run {} (All)".format(index+1)), Line2D([0], [0], color=color_targets, label="Run {} (Targets)".format(index+1)), Line2D([0], [0], color=color_decoys, label="Run {} (Decoys)".format(index+1))]
 
     plt.style.use('ggplot')
-    colors = plt.cm.tab10(numpy.linspace(0, 1, 10))
+    colors = plt.cm.tab20(numpy.linspace(0, 1, 18))
     params = {
        'font.size': 12,
        'axes.labelsize': 18,
@@ -169,8 +170,8 @@ HHIIJJ
     axs['B'].set_xticks([1, 2])
     axs['B'].set_xticklabels(["Targets", "Decoys"])
     vp = axs['B'].violinplot([stats['target scores'], stats['decoy scores']])
-    for b in vp['bodies']:
-        b.set_color(color_one)
+    vp['bodies'][0].set_color(color_targets)
+    vp['bodies'][1].set_color(color_decoys)
 
     # FDR/decoy rate over deciles
     axs['C'].set_title("Average FDR Over Score Deciles")
@@ -186,7 +187,7 @@ HHIIJJ
         end = int((i+1) * 0.1 * len(stats['curve']))
         dec_stats[i] = inv_curve[start:end].mean()
 
-    axs['C'].bar(list(range(10)), dec_stats, alpha=0.7, color=color_one)
+    axs['C'].bar(list(range(10)), dec_stats, alpha=0.7, color=color_all)
 
     n_unique = len(numpy.unique(stats['peptides'][stats['curve'][:,0] <= fdr_limit]))
     n_all = len(numpy.unique(stats['peptides']))
@@ -196,7 +197,7 @@ HHIIJJ
     axs['D'].set_xlabel("Count")
     axs['D'].set_yticks(list(range(2)))
     axs['D'].set_yticklabels(["Unique Peptide IDs", "Unique Peptides"])
-    axs['D'].barh(list(range(2)), [n_unique, n_all], alpha=0.7, color=color_one)
+    axs['D'].barh(list(range(2)), [n_unique, n_all], alpha=0.7, color=color_all)
     axs['D'].tick_params(axis='x', rotation=90)
 
     # N decoys, N targets, N total at T% FDR
@@ -208,7 +209,7 @@ HHIIJJ
     axs['E'].set_yticks(list(range(2)))
     axs['E'].set_yticklabels(["Targets", "Decoys"])
     axs['E'].tick_params(axis='x', rotation=90)
-    axs['E'].barh([0, 1], [n_targets, n_decoys], alpha=0.7, color=color_one)
+    axs['E'].barh([0, 1], [n_targets, n_decoys], alpha=0.7, color=[color_targets, color_decoys])
 
     # Identified spectra
     n_spectra_ids = len(numpy.unique(stats['spectra'][stats['curve'][:,0] <= fdr_limit]))
@@ -218,7 +219,7 @@ HHIIJJ
     axs['F'].set_yticks(list(range(2)))
     axs['F'].set_yticklabels(["Spectra With IDs", "Spectra Without IDs"])
     axs['F'].tick_params(axis='x', rotation=90)
-    axs['F'].barh([0, 1], [n_spectra_ids, n_spectra_no_ids], alpha=0.7, color=color_one)
+    axs['F'].barh([0, 1], [n_spectra_ids, n_spectra_no_ids], alpha=0.7, color=color_all)
 
     # Score violins per decile
     min_score = min(stats['scores'])
@@ -243,7 +244,7 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further right than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
-        b.set_color(color_one)
+        b.set_color(color_targets)
 
     all_scores = numpy.sort(stats['decoy scores'])
     dec_stats = [all_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= all_scores, all_scores < deciles[i])] for i in range(len(deciles))]
@@ -257,7 +258,7 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further left than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
-        b.set_color(color_two)
+        b.set_color(color_decoys)
 
     # Score violins per sequence length decile
     min_lgt = min(stats['lgts'])
@@ -291,7 +292,7 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further right than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
-        b.set_color('C0')
+        b.set_color(color_targets)
 
     dec_stats = [dec_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= dec_lgts, dec_lgts < deciles[i])] for i in range(len(deciles))]
     dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
@@ -303,7 +304,7 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further left than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
-        b.set_color('C1')
+        b.set_color(color_decoys)
 
     # Score violins per charge decile
     min_charge = min(stats['charges'])
@@ -343,14 +344,14 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further right than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
-        b.set_color(color_one)
+        b.set_color(color_targets)
 
     for b in decoy_violins['bodies']:
         # get the center
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further left than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
-        b.set_color(color_two)
+        b.set_color(color_decoys)
 
     # Score violins per precursor mass decile
     min_mass = min(stats['masses'])
@@ -384,7 +385,7 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further right than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
-        b.set_color(color_one)
+        b.set_color(color_targets)
 
     dec_stats = [dec_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= dec_masses, dec_masses < deciles[i])] for i in range(len(deciles))]
     dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
@@ -396,7 +397,7 @@ HHIIJJ
         m = numpy.mean(b.get_paths()[0].vertices[:, 0])
         # modify the paths to not go further left than the center
         b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
-        b.set_color(color_two)
+        b.set_color(color_decoys)
 
     return fig, axs, leg_lines
 
@@ -416,7 +417,7 @@ if __name__ == "__main__":
     fdr_limit = float(blackboard.config['report']['fdr threshold'])
 
     fig, axs, leg = plot_report(stats, fdr_limit)
-    fig.legend(handles=leg, loc='lower center', ncols=2, bbox_to_anchor=(0.5, -0.025))
+    fig.legend(handles=leg, loc='lower center', ncols=3, bbox_to_anchor=(0.5, -0.025))
     fig.tight_layout()
 
     import pickle
