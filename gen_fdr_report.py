@@ -1,21 +1,6 @@
 import numpy
 import sys
 import os
-import matplotlib
-matplotlib.use("Agg")
-from matplotlib import pyplot as plt
-
-plt.style.use('ggplot')
-params = {
-   'axes.labelsize': 12,
-   'font.size': 8,
-   'legend.fontsize': 10,
-   'xtick.labelsize': 10,
-   'ytick.labelsize': 10,
-   'text.usetex': False,
-   }
-matplotlib.rcParams.update(params)
-
 import tqdm
 import math
 
@@ -50,15 +35,18 @@ def tda_fdr(rescored=False):
             desc = fields[header.index('desc')]
             qrow = fields[header.index('qrow')]
             candrow = fields[header.index('candrow')]
+            charge = int(fields[header.index('query_charge')])
+            mass = float(fields[header.index('query_mass')])
+            seq = fields[header.index('seq')]
             if not math.isinf(score):
-                data.append((title, score, desc.startswith(decoy_prefix), qrow, candrow))
+                data.append((title, score, desc.startswith(decoy_prefix), qrow, candrow, len(seq), charge, mass))
 
     if len(data) == 0:
         import sys # despite top-level import, this is required... wtf???
         blackboard.LOG.error("FATAL: No entries in {}!\n".format(full_fname))
         sys.exit(-1)
 
-    dtype = [('title', object), ('score', numpy.float64), ('decoy', bool), ('qrow', numpy.int64), ('candrow', numpy.int64)]
+    dtype = [('title', object), ('score', numpy.float64), ('decoy', bool), ('qrow', numpy.int64), ('candrow', numpy.int64), ('lgt', numpy.int32), ('charge', numpy.int32), ('mass', numpy.float32)]
     ndata = numpy.array(data, dtype=dtype)
     ndata.sort(order=['score'])
     ndata = ndata[::-1]
@@ -81,6 +69,10 @@ def tda_fdr(rescored=False):
     sort_idx = numpy.argsort(fdr_levels)
     fdr_index = fdr_index[sort_idx]
     fdr_levels = fdr_levels[sort_idx]
+    lgts = data['lgt'][sort_idx]
+    charges = data['charge'][sort_idx]
+    masses = data['mass'][sort_idx]
+    scores = data['score'][sort_idx]
     fmax = fdr_index[0]
     for i in range(len(fdr_index)):
         fmax = max(fmax, fdr_index[i])
@@ -112,36 +104,49 @@ def tda_fdr(rescored=False):
             'decoy scores': data['score'][data['decoy']],
             'target scores': data['score'][numpy.logical_not(data['decoy'])],
             'spectra': data['qrow'],
-            'peptides': data['candrow']
+            'peptides': data['candrow'],
+            'lgts': lgts,
+            'target lgts': data['lgt'][numpy.logical_not(data['decoy'])],
+            'decoy lgts': data['lgt'][data['decoy']],
+            'charges': charges,
+            'target charges': data['charge'][numpy.logical_not(data['decoy'])],
+            'decoy charges': data['charge'][data['decoy']],
+            'masses': masses,
+            'target masses': data['mass'][numpy.logical_not(data['decoy'])],
+            'decoy masses': data['mass'][data['decoy']],
+            'scores': scores,
             }
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        blackboard.LOG.error("USAGE: {} config.cfg [output|rescored]\n".format(sys.argv[0]))
-        sys.exit(1)
+def plot_report(stats, fig_axs=None):
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
 
-    blackboard.config.read("data/default.cfg")
-    blackboard.config.read(sys.argv[1])
+    plt.style.use('ggplot')
+    params = {
+       'font.size': 12,
+       'axes.labelsize': 18,
+       'legend.fontsize': 14,
+       'xtick.labelsize': 16,
+       'ytick.labelsize': 16,
+       'text.usetex': False,
+       }
+    matplotlib.rcParams.update(params)
 
-    blackboard.setup_constants()
-
-    stats = tda_fdr(sys.argv[2].strip().lower() == 'rescored')
-    fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
-
-    all_scores = numpy.sort(numpy.hstack((stats['decoy scores'], stats['target scores'])))[::-1]
-    score_limit = all_scores[stats['level']]
-    fdr_limit = float(blackboard.config['report']['fdr threshold'])
-
-    mosaic = """
+    if fig_axs is None:
+        mosaic = """
 AABBDD
 AABBDD
-EECC..
-FFCC..
+EECCGG
+FFCCGG
+HHIIJJ
+HHIIJJ
 """
-    fig, axs = plt.subplot_mosaic(mosaic, figsize=(16,8), dpi=600)
+        fig, axs = plt.subplot_mosaic(mosaic, figsize=(16,16), dpi=600)
+    else:
+        fig, axs = fig_axs
 
     # FDR curve
-    plt.title("{} ({})".format(sys.argv[1], sys.argv[2]))
     axs['A'].set_title("Peptide Discovery vs FDR Threshold")
     axs['A'].set_ylabel("Peptides Identified")
     axs['A'].set_xlabel("FDR Threshold")
@@ -170,33 +175,249 @@ FFCC..
 
     axs['C'].bar(list(range(10)), dec_stats)
 
+    n_unique = len(numpy.unique(stats['peptides'][stats['curve'][:,0] <= fdr_limit]))
+    n_all = len(numpy.unique(stats['peptides']))
+
     # Unique peptides, identified spectra
-    axs['D'].set_title("Unique Peptides at {}% FDR".format(int(fdr_limit * 100)))
+    axs['D'].set_title("Unique Peptides at {}% FDR\nIDs: {} All: {}".format(int(fdr_limit * 100), n_unique, n_all))
     axs['D'].set_xlabel("Count")
     axs['D'].set_yticks(list(range(2)))
-    axs['D'].set_yticklabels(["Unique Peptide IDs", "All Peptide IDs"])
-    axs['D'].barh(list(range(2)), [len(numpy.unique(stats['peptides'][stats['curve'][:,0] <= fdr_limit])), len(stats['peptides'][stats['curve'][:,0] <= fdr_limit])])
+    axs['D'].set_yticklabels(["Unique Peptide IDs", "Unique Peptides"])
+    axs['D'].barh(list(range(2)), [n_unique, n_all])
+    axs['D'].tick_params(axis='x', rotation=90)
 
     # N decoys, N targets, N total at T% FDR
     n_decoys = (stats['decoy scores'] >= score_limit).sum()
     n_targets = (stats['target scores'] >= score_limit).sum()
     n_total = n_decoys + n_targets
 
-    axs['E'].set_title("Hit Count by Type at {}% FDR".format(int(fdr_limit * 100)))
+    axs['E'].set_title("Hit Count by Type at {}% FDR\nTargets: {} Decoys: {}".format(int(fdr_limit * 100), n_targets, n_decoys))
     axs['E'].set_yticks(list(range(2)))
-    axs['E'].set_yticklabels(["Targets ({})".format(n_targets), "Decoys ({})".format(n_decoys)])
+    axs['E'].set_yticklabels(["Targets", "Decoys"])
     axs['E'].tick_params(axis='x', rotation=90)
     axs['E'].barh([0, 1], [n_targets, n_decoys])
 
     # Identified spectra
     n_spectra_ids = len(numpy.unique(stats['spectra'][stats['curve'][:,0] <= fdr_limit]))
-    n_spectra_no_ids = len(stats['curve']) - n_spectra_ids
+    n_spectra_no_ids = len(numpy.unique(stats['spectra'])) - n_spectra_ids
 
-    axs['F'].set_title("Identified Spectra at {}% FDR".format(int(fdr_limit * 100)))
+    axs['F'].set_title("Identified Spectra at {}% FDR\nID: {} No ID: {}".format(int(fdr_limit * 100), n_spectra_ids, n_spectra_no_ids))
     axs['F'].set_yticks(list(range(2)))
-    axs['F'].set_yticklabels(["Spectra With IDs ({})".format(n_spectra_ids), "Spectra Without IDs ({})".format(n_spectra_no_ids)])
+    axs['F'].set_yticklabels(["Spectra With IDs", "Spectra Without IDs"])
     axs['F'].tick_params(axis='x', rotation=90)
     axs['F'].barh([0, 1], [n_spectra_ids, n_spectra_no_ids])
 
-    plt.tight_layout()
-    plt.savefig(os.path.join(blackboard.config['report']['out'], "plot_{}_{}.svg".format(fname.rsplit("/", 1)[-1], sys.argv[2])))
+    # Score violins per decile
+    min_score = min(stats['scores'])
+    max_score = max(stats['scores'])
+    axs['G'].set_title("Score Violin Plots -- Score Decile\n{:0.4f}-{:0.4f}".format(min_score, max_score))
+    axs['G'].set_ylabel("Score")
+    axs['G'].set_xlabel("Decile #")
+
+    scores = stats['scores']
+    deciles = numpy.percentile(scores, (numpy.arange(9) + 1)*10)
+    all_scores = numpy.sort(stats['target scores'])
+    dec_stats = [all_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= all_scores, all_scores < deciles[i])] for i in range(len(deciles))]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+
+    axs['G'].set_xticks(list(range(1, len(dec_stats)+1)))
+    axs['G'].set_xticklabels(list(map(str, range(1, len(dec_stats)+1))))
+
+    target_violins = axs['G'].violinplot(dec_stats)
+
+    for b in target_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further right than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
+        b.set_color('C0')
+
+    all_scores = numpy.sort(stats['decoy scores'])
+    dec_stats = [all_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= all_scores, all_scores < deciles[i])] for i in range(len(deciles))]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+
+    decoy_violins = axs['G'].violinplot(dec_stats)
+
+    for b in decoy_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further left than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
+        b.set_color('C1')
+
+    axs['G'].legend([target_violins['bodies'][0], decoy_violins['bodies'][0]], ['Targets', 'Decoys'], loc='upper left')
+
+    # Score violins per sequence length decile
+    min_lgt = min(stats['lgts'])
+    max_lgt = max(stats['lgts'])
+
+    axs['H'].set_title("Score Violin Plots -- Sequence Length\n{}-{}".format(min_lgt, max_lgt))
+    axs['H'].set_ylabel("Score")
+    axs['H'].set_xlabel("Decile #")
+
+    tgt_scores = stats['target scores']
+    dec_scores = stats['decoy scores']
+    scores = stats['scores']
+    lengths = stats['lgts']
+    tgt_lgts = stats['target lgts']
+    dec_lgts = stats['decoy lgts']
+    idxs = numpy.argsort(lengths)
+    scores = scores[idxs]
+    lengths = lengths[idxs]
+
+    deciles = numpy.percentile(lengths, (numpy.arange(9) + 1)*10)
+    dec_stats = [tgt_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= tgt_lgts, tgt_lgts < deciles[i])] for i in range(len(deciles))]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+
+    axs['H'].set_xticks(list(range(1, len(dec_stats)+1)))
+    axs['H'].set_xticklabels(list(map(str, range(1, len(dec_stats)+1))))
+
+    target_violins = axs['H'].violinplot(dec_stats)
+
+    for b in target_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further right than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
+        b.set_color('C0')
+
+    dec_stats = [dec_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= dec_lgts, dec_lgts < deciles[i])] for i in range(len(deciles))]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+
+    decoy_violins = axs['H'].violinplot(dec_stats)
+
+    for b in decoy_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further left than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
+        b.set_color('C1')
+
+    axs['H'].legend([target_violins['bodies'][0], decoy_violins['bodies'][0]], ['Targets', 'Decoys'], loc='upper left')
+
+    # Score violins per charge decile
+    min_charge = min(stats['charges'])
+    max_charge = max(stats['charges'])
+
+    axs['I'].set_title("Score Violin Plots -- Charge\n{}-{}".format(min_charge, max_charge))
+    axs['I'].set_ylabel("Score")
+    axs['I'].set_xlabel("Charge")
+
+    tgt_charges = stats['target charges']
+    dec_charges = stats['decoy charges']
+    tgt_scores = stats['target scores']
+    dec_scores = stats['decoy scores']
+    tgt_dec_stats = []
+    dec_dec_stats = []
+    for z in range(min_charge, max_charge+1):
+        tgt_s = tgt_scores[tgt_charges == z]
+        if len(tgt_s) > 0:
+            tgt_dec_stats.append(tgt_s)
+        else:
+            tgt_dec_stats.append(numpy.array([0]))
+
+        dec_s = dec_scores[dec_charges == z]
+        if len(dec_s) > 0:
+            dec_dec_stats.append(dec_s)
+        else:
+            dec_dec_stats.append(numpy.array([0]))
+
+    axs['I'].set_xticks(list(range(1, max_charge-min_charge+2)))
+    axs['I'].set_xticklabels(list(map(str, range(min_charge, max_charge+1))))
+
+    target_violins = axs['I'].violinplot(tgt_dec_stats)
+    decoy_violins = axs['I'].violinplot(dec_dec_stats)
+
+    for b in target_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further right than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
+        b.set_color('C0')
+
+    for b in decoy_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further left than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
+        b.set_color('C1')
+
+    axs['I'].legend([target_violins['bodies'][0], decoy_violins['bodies'][0]], ['Targets', 'Decoys'], loc='upper left')
+
+    # Score violins per precursor mass decile
+    min_mass = min(stats['masses'])
+    max_mass = max(stats['masses'])
+
+    axs['J'].set_title("Score Violin Plots -- Precursor Mass\n{:0.4f}-{:0.4f}".format(min_mass, max_mass))
+    axs['J'].set_ylabel("Score")
+    axs['J'].set_xlabel("Decile #")
+
+    tgt_scores = stats['target scores']
+    dec_scores = stats['decoy scores']
+    scores = stats['scores']
+    masses = stats['masses']
+    tgt_masses = stats['target masses']
+    dec_masses = stats['decoy masses']
+    idxs = numpy.argsort(lengths)
+    scores = scores[idxs]
+    lengths = lengths[idxs]
+
+    deciles = numpy.percentile(masses, (numpy.arange(9) + 1)*10)
+    dec_stats = [tgt_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= tgt_masses, tgt_masses < deciles[i])] for i in range(len(deciles))]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+
+    axs['J'].set_xticks(list(range(1, len(dec_stats)+1)))
+    axs['J'].set_xticklabels(list(map(str, range(1, len(dec_stats)+1))))
+
+    target_violins = axs['J'].violinplot(dec_stats)
+
+    for b in target_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further right than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], -numpy.inf, m)
+        b.set_color('C0')
+
+    dec_stats = [dec_scores[numpy.logical_and((deciles[i-1] if i > 0 else 0) <= dec_masses, dec_masses < deciles[i])] for i in range(len(deciles))]
+    dec_stats = [x if len(x) > 0 else numpy.array([0]) for x in dec_stats]
+
+    decoy_violins = axs['J'].violinplot(dec_stats)
+
+    for b in decoy_violins['bodies']:
+        # get the center
+        m = numpy.mean(b.get_paths()[0].vertices[:, 0])
+        # modify the paths to not go further left than the center
+        b.get_paths()[0].vertices[:, 0] = numpy.clip(b.get_paths()[0].vertices[:, 0], m, numpy.inf)
+        b.set_color('C1')
+
+    axs['J'].legend([target_violins['bodies'][0], decoy_violins['bodies'][0]], ['Targets', 'Decoys'], loc='upper left')
+
+    fig.tight_layout()
+
+    return fig, axs
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        blackboard.LOG.error("USAGE: {} config.cfg [output|rescored]\n".format(sys.argv[0]))
+        sys.exit(1)
+
+    blackboard.config.read("data/default.cfg")
+    blackboard.config.read(sys.argv[1])
+
+    blackboard.setup_constants()
+
+    stats = tda_fdr(sys.argv[2].strip().lower() == 'rescored')
+    fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
+
+    all_scores = numpy.sort(numpy.hstack((stats['decoy scores'], stats['target scores'])))[::-1]
+    score_limit = all_scores[stats['level']]
+    fdr_limit = float(blackboard.config['report']['fdr threshold'])
+
+    fig, axs = plot_report(stats)
+
+    import pickle
+    report_pkl_path = os.path.join(blackboard.config['report']['out'], "report_{}_{}.pkl".format(fname.rsplit("/", 1)[-1], sys.argv[2]))
+    pickle.dump(stats, open(report_pkl_path, "wb"))
+
+    fig.savefig(os.path.join(blackboard.config['report']['out'], "plot_{}_{}.svg".format(fname.rsplit("/", 1)[-1], sys.argv[2])), bbox_inches='tight')

@@ -26,7 +26,7 @@ if __name__ == '__main__':
             sys.exit(ret)
 
     if blackboard.config['pipeline'].getboolean('report'):
-        report_name = "gen_{}_report.py".format(blackboard.config['report']['type'])
+        report_name = "gen_fdr_report.py"
         proc = blackboard.subprocess([report_name, sys.argv[1], "output"])
         while True:
             ret = proc.poll()
