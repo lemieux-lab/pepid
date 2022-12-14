@@ -162,7 +162,7 @@ HHIIJJ
     axs['A'].set_title("Peptide Discovery vs FDR Threshold")
     axs['A'].set_ylabel("Peptides Identified")
     axs['A'].set_xlabel("FDR Threshold")
-    axs['A'].plot(stats['curve'][:,0], stats['curve'][:,1])
+    axs['A'].plot(stats['curve'][:,0], stats['curve'][:,1], color=color_all)
 
     # Score violins
     axs['B'].set_title("Score Violin Plots")
