@@ -63,6 +63,6 @@ Pepid also outputs a graphical report that can be used to quickly ascertain the 
 
 ## WIP
 
-Pepid is currently work in progress. Missing elements incclude full port and proper integration of deep learning-driven components (spectrum property extraction, theoretical spectrum generation, and more), and an alternative to TDA-FDR evaluation.
+Pepid is currently work in progress. Missing elements include a full port and proper integration of deep learning-driven components (spectrum property extraction, theoretical spectrum generation, and more), and an alternative to TDA-FDR evaluation.
 
 See upcoming paper for more details.
