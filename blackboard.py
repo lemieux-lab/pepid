@@ -5,6 +5,7 @@ import time
 import uuid
 import pickle
 import sys
+import fcntl
 
 import logging
 
@@ -14,6 +15,7 @@ LOG = None
 CONN = None
 RES_CONN = None
 META_CONN = None
+LOCK = None
 
 config = configparser.ConfigParser(inline_comment_prefixes="#")
 
@@ -105,7 +107,7 @@ def init_results_db(generate=False, base_dir=None):
 
     RES_CONN.row_factory = sqlite3.Row
     cur = RES_CONN.cursor()
-    execute(cur, create_table_str("main.results", RES_COLS, [t if ((i != RES_COLS.index("score")) or (not generate)) else (t + " CHECK(score > 0)") for i, t in enumerate(RES_TYPES)]))
+    execute(cur, create_table_str("main.results", RES_COLS, RES_TYPES))
     RES_CONN.commit()
 
     META_CONN = None
@@ -128,7 +130,7 @@ def init_results_db(generate=False, base_dir=None):
 
     META_CONN.row_factory = sqlite3.Row
     cur = META_CONN.cursor()
-    execute(cur, create_table_str("main.meta", META_COLS, [t if ((i != META_COLS.index("score")) or (not generate)) else (t + " CHECK(score > 0)") for i, t in enumerate(META_TYPES)]))
+    execute(cur, create_table_str("main.meta", META_COLS, META_TYPES))
     META_CONN.commit()
 
 def setup_constants():
@@ -179,7 +181,7 @@ def setup_constants():
         no_workdir = config['data'].getboolean('workdir')
         if no_workdir:
             sys.stderr.write("[pepid]: workdir set to true is invalid; expected path or false\n")
-            sys.exit(1)
+            sys.exit(-1)
     except:
         TMP_PATH = config['data']['workdir']
 
@@ -258,3 +260,9 @@ def subprocess(args):
     payload = [config['performance']['python']] + extra_args + args
     proc = sp.Popen(payload)
     return proc
+
+def lock():
+    fcntl.lockf(LOCK, fcntl.LOCK_EX)
+
+def unlock():
+    fcntl.lockf(LOCK, fcntl.LOCK_UN)

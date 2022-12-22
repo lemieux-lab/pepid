@@ -26,7 +26,6 @@ class SearchNode(node.Node):
         self.path = blackboard.TMP_PATH
         blackboard.setup_constants()
         blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
-        blackboard.init_results_db(True, base_dir=blackboard.TMP_PATH)
         blackboard.prepare_connection()
 
 if __name__ == '__main__':

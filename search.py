@@ -429,6 +429,9 @@ def search_core(start, end):
     in `blackboard.py`.
     """
 
+    blackboard.init_results_db(generate=True, base_dir=blackboard.TMP_PATH)
+    shard_level = blackboard.config['scoring'].getint('sharding threshold')
+
     scoring_fn = pepid_utils.import_or(blackboard.config['scoring']['function'], xcorr)
 
     batch_size = blackboard.config['scoring'].getint('batch size')
@@ -440,47 +443,81 @@ def search_core(start, end):
     blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     queries = cur.fetchall()
 
-    blackboard.execute(m_cur, "SELECT MAX(rrow) FROM meta;")
-    prev_rrow = m_cur.fetchone()
-    rrow = 1 if prev_rrow[0] is None else prev_rrow[0] + 1
+    blackboard.execute(res_cur, "SELECT MAX(rrow) FROM results;")
+    prev_rrow = res_cur.fetchone()[0]
+    rrow = 1 if prev_rrow is None else prev_rrow + 1
+
     fname_prefix = blackboard.RES_DB_FNAME.rsplit(".", 1)[0]
 
-    total_cand_cnt = 0
+    n_cands = 0
     cands = []
     quers = []
+
+    def insert(res, cands, q, rrow):
+        nonlocal cur
+        nonlocal res_cur
+        nonlocal m_cur
+        nonlocal shard_level
+        nonlocal fname_prefix
+
+        this_res = []
+        metar = []
+        for ii, (r, c) in enumerate(zip(res, cands)):
+            if r['score'] <= 0:
+                continue
+            else:
+                this_res.append({'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': q['charge'], 'query_mass': q['mass'], 'cand_mass': c['mass'], 'rrow': rrow, 'file': fname_prefix})
+                metar.append({'score': r['score'], 'qrow': q['rowid'], 'candrow': c['rowid'], 'data': str(r), "rrow": rrow})
+                rrow += 1
+        if len(this_res) > 0:
+            blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), this_res)
+            blackboard.executemany(m_cur, blackboard.maybe_insert_dict_str("meta", blackboard.META_COLS), metar)
+            if rrow > shard_level:
+                rrow = 1
+                blackboard.RES_CONN.commit()
+                blackboard.META_CONN.commit()
+                blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
+                blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
+                blackboard.execute(m_cur, "CREATE INDEX IF NOT EXISTS m_rrow_idx ON meta (rrow ASC);")
+                blackboard.RES_CONN.commit()
+                blackboard.META_CONN.commit()
+                res_cur.close()
+                m_cur.close()
+                blackboard.RES_CONN.close()
+                blackboard.META_CONN.close()
+                blackboard.init_results_db(generate=True, base_dir=blackboard.TMP_PATH)
+                res_cur = blackboard.RES_CONN.cursor()
+                m_cur = blackboard.META_CONN.cursor()
+                fname_prefix = blackboard.RES_DB_FNAME.rsplit(".", 1)[0]
+        return rrow
 
     for iq, q in enumerate(queries):
         quers.append(q)
         cands.append([])
         blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
         
-        cleanup_round = False
         while True:
-            if not cleanup_round:
-                cand_set = cur.fetchmany(batch_size)
-                cands[-1].extend(cand_set)
+            cand_set = cur.fetchmany(batch_size)
+            cands[-1].extend(cand_set)
+            n_cands += len(cand_set)
 
-            if len(cands) >= batch_size or (cleanup_round and len(cands[0]) > 0):
+            if n_cands >= batch_size:
+                n_cands = 0
                 res = scoring_fn(cands, quers)
                 for oq, ocands, ores in zip(quers, cands, res):
-                    this_res = [{'qrow': oq['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': oq['charge'], 'query_mass': oq['mass'], 'cand_mass': c['mass'], 'rrow': rrow + ii, 'file': fname_prefix} for ii, (r, c) in enumerate(zip(ores, ocands)) if r['score'] > 0]
-                    if len(this_res) > 0:
-                        blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), this_res)
-                        metar = [{'score': r['score'], 'qrow': oq['rowid'], 'candrow': c['rowid'], 'data': str(r), "rrow": rrow + ii} for ii, (r, c) in enumerate(zip(ores, ocands)) if r['score'] > 0]
-                        blackboard.executemany(m_cur, blackboard.maybe_insert_dict_str("meta", blackboard.META_COLS), metar)
-                        rrow += len(ores)+1
+                    rrow = insert(ores, ocands, oq, rrow)
                 cands = [[]]
                 quers = [quers[-1]]
 
-            if cleanup_round:
-                break
-
             if len(cand_set) == 0:
                 if len(cands[0]) > 0:
-                    cleanup_round = True
-                else:
-                    break
+                    res = scoring_fn(cands, quers)
+                    for oq, ocands, ores in zip(quers, cands, res):
+                        rrow = insert(ores, ocands, oq, rrow)
+                break
 
+    blackboard.RES_CONN.commit()
+    blackboard.META_CONN.commit()
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
     blackboard.execute(m_cur, "CREATE INDEX IF NOT EXISTS m_rrow_idx ON meta (rrow ASC);")

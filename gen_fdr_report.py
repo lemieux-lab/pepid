@@ -404,7 +404,7 @@ HHIIJJ
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         blackboard.LOG.error("USAGE: {} config.cfg [output|rescored]\n".format(sys.argv[0]))
-        sys.exit(1)
+        sys.exit(-1)
 
     blackboard.config.read("data/default.cfg")
     blackboard.config.read(sys.argv[1])

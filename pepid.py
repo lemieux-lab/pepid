@@ -5,7 +5,7 @@ import time
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("USAGE: {} config.cfg".format(sys.argv[0]))
-        sys.exit(1)
+        sys.exit(-1)
 
     blackboard.config.read("data/default.cfg")
     blackboard.config.read(sys.argv[1])
@@ -24,6 +24,21 @@ if __name__ == '__main__':
             if log_level == 'debug':
                 sys.stderr.write("Terminated with error {}\n".format(ret))
             sys.exit(ret)
+
+    if blackboard.config['pipeline'].getboolean('output'):
+        proc = blackboard.subprocess(["pepid_io.py", sys.argv[1]])
+        while True:
+            ret = proc.poll()
+            if ret is not None:
+                break
+            time.sleep(1) 
+
+        if ret < 0:
+            if log_level == 'debug':
+                sys.stderr.write("Terminated with error {}\n".format(ret))
+            sys.exit(ret)
+
+
 
     if blackboard.config['pipeline'].getboolean('report'):
         report_name = "gen_fdr_report.py"

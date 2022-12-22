@@ -19,7 +19,7 @@ if __name__ == '__main__':
         outf.write(header)
         f.seek(0)
 
-        for data in rescore_fn(f):
+        for data in rescore_fn(sys.argv[1]):
             outf.write("\t".join(list(map(str, data))) + "\n")
 
         f.close()
