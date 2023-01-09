@@ -78,15 +78,13 @@ def generate_pin(start, end):
 
     max_scores = blackboard.config['rescoring'].getint('max scores')
 
-    dtype = [('rrow', numpy.int32), ('desc', numpy.object), ('seq', numpy.object), ('title', numpy.object), ('db', numpy.object)]
-    keys = [d[0] for d in dtype]
+    payload_dtype = [('rrow', numpy.int32), ('desc', numpy.object), ('seq', numpy.object), ('title', numpy.object), ('db', numpy.object)]
+    keys = [d[0] for d in payload_dtype]
 
     feats = None
 
     def step(payload, idx):
-        payload = [tuple([p[k] for k in keys]) for p in payload]
-        payload = numpy.array(payload, dtype=dtype)
-        payload = numpy.sort(payload, order='db')
+        payload = numpy.sort(numpy.asarray(payload, dtype=payload_dtype), order='db')
 
         prev_file = None
         rrows = []
@@ -183,20 +181,22 @@ def generate_pin(start, end):
         db_pre = sl[header.index('file')]
         title = sl[header.index('title')]
         desc = sl[header.index('desc')]
+        score = sl[header.index('score')]
 
         if title != prev_title:
             if prev_title is not None:
                 cnt += 1
+                payload.extend([x for x in title_payload.tolist() if x[keys.index('db')] != 0])
+            title_pscores = numpy.zeros((max_scores,), dtype='float32')
+            title_payload = numpy.zeros((max_scores,), dtype=payload_dtype)
             prev_title = title
             title_cnt = 0
-            dont_skip = True
 
         title_cnt += 1
 
-        if dont_skip:
-            payload.append({'rrow': int(sl[header.index('rrow')]), 'desc': desc, 'seq': sl[header.index('modseq')], 'title': title, 'db': db_pre})
-            if title_cnt > max_scores:
-                dont_skip = False
+        ins = numpy.searchsorted(title_pscores, score)
+        title_pscores = numpy.insert(title_pscores, ins, score)[-max_scores:]
+        title_payload = numpy.insert(title_payload, ins, (int(sl[header.index('rrow')]), desc, sl[header.index('modseq')], title, db_pre))[-max_scores:]
 
     if len(payload) > 0:
         idx = step(payload, idx)
@@ -235,6 +235,8 @@ def rescore(cfg_file):
     cur.execute("SELECT data FROM meta LIMIT 1;")
     one = cur.fetchone()[0]
     feats = [k.strip()[1:-1] for k in map(lambda x: x.strip().split(":")[0], one.strip()[1:-1].split(","))]
+    if 'rawscore' in feats:
+        feats.append('deltLCn')
     feats = [x for x in feats if x not in FEATS_BLACKLIST]
 
     fpin = open(pin_name, 'w')

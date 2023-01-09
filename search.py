@@ -4,6 +4,7 @@ import blackboard
 import pepid_utils
 import re
 import numba
+import numba.typed
 import sys
 
 def cosine(cands, q):
@@ -30,16 +31,13 @@ def hyperscore(qcands, qs):
     """
     Sample scoring function: rnhs from identipy (with norm type = sum) or hyperscore from x!tandem (with norm type = max).
     Score output is a dictionary. If the score function will be rescored by percolator,
-    the dictionary keys corresponding to the percolator parameters will be used for that purpose.    
+    the dictionary keys corresponding to the percolator parameters will be used for that purpose.
     """
 
     ret = []
 
-    style = blackboard.config['scoring.hyperscore']['feature style']
     norm_type = blackboard.config['scoring.hyperscore']['norm type']
     ignore_weights = blackboard.config['scoring.hyperscore'].getboolean('ignore weights')
-
-    max_exp = sys.float_info.max_exp
 
     acc_ppm = blackboard.config['scoring.hyperscore']['peak matching unit'] == 'ppm'
     acc = blackboard.config['scoring.hyperscore'].getfloat('peak matching tolerance')
@@ -61,6 +59,7 @@ def hyperscore(qcands, qs):
         blackboard.LOG.fatal("Hyperscore: type best must be exactly one of charge, series or both, got '{}'".format(type_best))
         sys.exit(-1)
     series_count = blackboard.config['scoring.hyperscore'].getint('series count')
+    match_all = not blackboard.config['scoring.hyperscore'].getboolean('match only closest peak')
 
     for q, cands in zip(qs, qcands):
         ret.append([])
@@ -85,8 +84,8 @@ def hyperscore(qcands, qs):
 
             theoretical = numpy.asarray(theoretical, dtype='float32')[:int((charge-1) * series_count)]
 
-            sumis, series_matches = hyperscore_score(spectrum, theoretical, norm, acc, acc_ppm, cutoff, match_mult, type_charge, type_series, type_both, series_count, ignore_weights)
-            sumI = float(sumis.sum())
+            sumis, series_matches = hyperscore_score(spectrum, theoretical, norm, acc, acc_ppm, cutoff, match_mult, type_charge, type_series, type_both, series_count, ignore_weights, match_all)
+            sumI = float((sumis * norm).sum())
 
             # Select only the best N series/charges/match-lists
             selection = numpy.argsort(series_matches if criterion == 'matches' else sumis)[-max_best:]
@@ -98,71 +97,59 @@ def hyperscore(qcands, qs):
                 continue
 
             mults = numpy.ones(selection.shape, dtype='float32')
-            float_lim = 10**((300 / 2) / len(series_matches)) # exp lim is 308, so we limit ourselves to a value that guarantees no overflow at worst
+            import sys
+            float_lim = sys.float_info.max
             for j, matches in enumerate(series_matches):
                 if matches > 0:
-                    mults[j] = numpy.minimum(numpy.math.factorial(min(63, matches)), float_lim)
-
-            score = float((numpy.minimum(sumis.sum(), float_lim) * mults).prod() if not disjoint else sumis.sum() * mults.prod())
+                    mults[j] = min(numpy.math.factorial(min(20, matches)), float_lim)
+            if not disjoint:
+                s = sumis.sum()
+                score = 1
+                for m in mults:
+                    score *= s * m
+            else:
+                score = sumis.sum()
+                for m in mults:
+                    score *= m
+            score = float(min(score, float_lim))
 
             logsumI = numpy.log10(sumI) # note: x!tandem uses a factor 4 to multiply this by default
 
-            if style == 'mascot':
-                ret[-1].append({"dM": c['mass'] - q['mass'], #"MIT": mascot_t, "MHT": mascot_t, "mScore": mascot
-                            "peptideLength": len(c['seq']), "z1": int(q['charge'] == 1), "z2": int(2 <= q['charge'] <= 3),
-                            "z4": int(4 <= q['charge'] <= 6), "z7": int(q['charge'] >= 7), "isoDM": abs(c['mass'] - q['mass']),
-                #            "isoDMppm": abs(pepid_utils.calc_ppm(c['mass'], q[i]['mass'])), "isoDmz": abs(c['mass'] - q[i]['mass']),
-                #            "12C": 1, "mc0": int(mc == 0), "mc1": int(0 <= mc <= 1), "mc2": int(mc >= 2),
-                            'varmods': float((numpy.asarray(c['mods']) > 0).sum()) / max(1, sum([x in c['mods'] for x in c['seq']])),
-                            'varmodsCount': len(numpy.unique(c['mods'])), 'totInt': numpy.log10(intens.sum()),
-                #           'intMatchedTot': numpy.log10(sum([spec[dist_mask[:,i]][:,1].sum() for i in range(dist_mask.shape[1])])),
-                            'intMatchedTot': logsumI,
-                            'relIntMatchedTot': sumI / norm, 'RMS': numpy.sqrt(numpy.mean([(d[m]**2).mean() for d, m in zip(dists, masks) if m.sum() != 0])),
-                            'RMSppm': numpy.sqrt(numpy.mean([(((d[m] / mz_array[m]) * 1e6)**2).mean() for d, m in zip(dists, masks) if m.sum() != 0])),
-                            'meanAbsFragDa': numpy.mean([d[m].mean() for d, m in zip(dists, masks) if m.sum() != 0]), 'meanAbsFragPPM': numpy.mean([(d[m] / mz_array[m]).mean() for d, m in zip(dists, masks) if m.sum() != 0]),
-                            'rawscore': score,
-                            'expMass': q['mass'],
-                            'calcMass': c['mass'],
-
-                    'score': score, 'sumI': logsumI, 'total_matched': total_matched, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
-                frag_names = list(map(lambda i: "by"[i % series_count] + str(i // series_count + 1), range(len(theoretical))))
-                for i in range(len(frag_names)):
-                    ret[-1][-1]['tot_{}_matches'.format(frag_names[i])] = masks[i].sum() if i < len(masks) else 0
-                ret[-1][-1]['mc'] = len(re.findall(blackboard.config['processing.db']['digestion'], c['seq']))
-                ret[-1][-1]['mc0'] = ret[-1]['mc'] == 0
-                ret[-1][-1]['mc1'] = ret[-1]['mc'] == 1
-                ret[-1][-1]['mc2'] = ret[-1]['mc'] == 2
-
-            else:
-                ret[-1].append({"dM": (c['mass'] - q['mass']) / c['mass'],
-                            "absdM": abs((c['mass'] - q['mass']) / c['mass']),
-                            "peplen": len(c['seq']),
-                            "ionFrac": total_matched / (theoretical.shape[0] * theoretical.shape[1]),
-                            #'relIntTotMatch': sumI / norm,
-                            'charge': int(q['charge']),
-                            'z2': int(q['charge'] == 2),
-                            'z3': int(q['charge'] == 3),
-                            'z4': int(q['charge'] == 4),
-                            'rawscore': score,
-                            #'xcorr': xcorr,
-                            'expMass': q['mass'],
-                            'calcMass': c['mass'],
-                    'score': score, 'sumI': logsumI, 'total_matched': total_matched, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+            ret[-1].append({"dM": (c['mass'] - q['mass']) / c['mass'],
+                        "absdM": abs((c['mass'] - q['mass']) / c['mass']),
+                        "peplen": len(c['seq']),
+                        "ionFrac": total_matched / (theoretical.shape[0] * theoretical.shape[1]),
+                        #'relIntTotMatch': sumI / norm,
+                        'charge': int(q['charge']),
+                        'z2': int(q['charge'] == 2),
+                        'z3': int(q['charge'] == 3),
+                        'z4': int(q['charge'] == 4),
+                        'rawscore': score,
+                        #'xcorr': xcorr,
+                        'expMass': q['mass'],
+                        'calcMass': c['mass'],
+                'score': score, 'sumI': logsumI, 'total_matched': total_matched, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
     return ret
 
-@numba.njit(locals={'spectrum': numba.float32[:,::1], 'theoretical': numba.float32[:,:,::1], 'acc': numba.float32, 'delta': numba.float32, 'series_count': numba.int32, 'norm': numba.float32})
-def hyperscore_score(spectrum, theoretical, norm, acc=10, acc_ppm=True, cutoff=0.01, match_mult=100.0, type_charge=False, type_series=False, type_both=True, series_count=2, ignore_weights=False):
+@numba.njit(locals={'spectrum': numba.float32[:,::1], 'theoretical': numba.float32[:,:,::1], 'acc': numba.float32, 'delta': numba.float32, 'series_count': numba.int32, 'norm': numba.float32, 'spec_idx': numba.int32})
+def hyperscore_score(spectrum, theoretical, norm, acc=10, acc_ppm=True, cutoff=0.01, match_mult=100.0, type_charge=False, type_series=False, type_both=True, series_count=2, ignore_weights=False, match_all=False):
     mz_array = spectrum[:,0]
     intens = spectrum[:,1]
 
     series_matches = numpy.zeros((((len(theoretical) // series_count) if type_charge else series_count if type_series else len(theoretical)),), dtype='int32')
     sumis = numpy.zeros((series_matches.shape[0],), dtype='float32')
 
-    delta = acc+1
+    delta = float(acc+1)
 
     idxs = numpy.zeros((len(theoretical),), dtype='int32')
 
-    for mass, intensity in spectrum:
+    min_dists = numpy.ones((len(theoretical), spectrum.shape[0]), dtype='float32') * numpy.inf
+    prev_idx = numpy.ones((len(theoretical), spectrum.shape[0]), dtype='int32') * -1
+    prev_val = numpy.ones((len(theoretical), spectrum.shape[0]), dtype='float32') * 0
+
+    for spec_idx, (mass, intensity) in enumerate(spectrum):
+        next_peak = spectrum[spec_idx+1,0] if spec_idx+1 < len(spectrum) else 0
+        next_lim = (next_peak - (((acc / 1e6) * next_peak) if acc_ppm else acc)) if spec_idx+1 < len(spectrum) else numpy.inf
         for s in range(len(theoretical)):
             series_idx = s % series_count
             charge_idx = s // series_count
@@ -171,15 +158,31 @@ def hyperscore_score(spectrum, theoretical, norm, acc=10, acc_ppm=True, cutoff=0
                     delta = ((mass - theoretical[s,i,0]) / mass) * 1e6
                 else:
                     delta = (mass - theoretical[s,i,0])
-                if abs(delta) <= acc:
+                adelta = abs(delta)
+
+                if theoretical[s,i,0] < next_lim:
+                    idxs[s] = i # Record the last index that can't be within range of the next peak
+
+                if ((not match_all) and (min_dists[s,spec_idx] <= adelta)):
+                    if adelta > acc and delta < 0:
+                        break
+                    continue
+                elif not match_all:
+                    min_dists[s,spec_idx] = adelta
+                if adelta <= acc:
                     normed_intens = intensity / norm
                     if normed_intens > cutoff:
                         val = normed_intens * (theoretical[s,i,1] if not ignore_weights else 1) * match_mult
                         idx = charge_idx if type_charge else series_idx if type_series else s
+                        if not match_all:
+                            if prev_idx[s,idx] >= 0:
+                                sumis[prev_idx[s,spec_idx]] -= prev_val[s,spec_idx]
+                                series_matches[prev_idx[s,spec_idx]] -= 1
+                            prev_idx[s,spec_idx] = idx
+                            prev_val[s,spec_idx] = val
                         sumis[idx] += val
                         series_matches[idx] += 1
-                elif delta < 0:
-                    idxs[s] = i
+                elif delta < 0: # anything else will be increasingly further away, bail
                     break
 
     return sumis, series_matches
@@ -358,7 +361,7 @@ def xcorr_correct_spec(spec, window_size=75, flank_mode='sides', flank_length=3)
         right = (spec[j-window_size-1] if j > 2*window_size else zero)
         windows.append(rs)
         rs += left - right
-        
+
     for j in range(len(spec)):
         this = (spec[j] - (windows[j] - spec[j]) / (2*window_size))
         if flank_mode == 'none':
