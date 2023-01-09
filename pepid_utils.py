@@ -13,26 +13,26 @@ MASS_P = 30.973762
 MASS_PROT = 1.00727646688
 MASS_OH = MASS_O + MASS_H
 
-AA_TABLE['G'] = MASS_C*2  + MASS_H*3  + MASS_N   + MASS_O 
-AA_TABLE['A'] = MASS_C*3  + MASS_H*5  + MASS_N   + MASS_O 
-AA_TABLE['S'] = MASS_C*3  + MASS_H*5  + MASS_N   + MASS_O*2 
-AA_TABLE['P'] = MASS_C*5  + MASS_H*7  + MASS_N   + MASS_O 
-AA_TABLE['V'] = MASS_C*5  + MASS_H*9  + MASS_N   + MASS_O 
-AA_TABLE['T'] = MASS_C*4  + MASS_H*7  + MASS_N   + MASS_O*2 
-AA_TABLE['C'] = MASS_C*3  + MASS_H*5  + MASS_N   + MASS_O   + MASS_S 
-AA_TABLE['L'] = MASS_C*6  + MASS_H*11 + MASS_N   + MASS_O 
-AA_TABLE['I'] = MASS_C*6  + MASS_H*11 + MASS_N   + MASS_O 
-AA_TABLE['N'] = MASS_C*4  + MASS_H*6  + MASS_N*2 + MASS_O*2 
-AA_TABLE['D'] = MASS_C*4  + MASS_H*5  + MASS_N   + MASS_O*3 
-AA_TABLE['Q'] = MASS_C*5  + MASS_H*8  + MASS_N*2 + MASS_O*2 
-AA_TABLE['K'] = MASS_C*6  + MASS_H*12 + MASS_N*2 + MASS_O 
-AA_TABLE['E'] = MASS_C*5  + MASS_H*7  + MASS_N   + MASS_O*3 
-AA_TABLE['M'] = MASS_C*5  + MASS_H*9  + MASS_N   + MASS_O   + MASS_S 
-AA_TABLE['H'] = MASS_C*6  + MASS_H*7  + MASS_N*3 + MASS_O 
-AA_TABLE['F'] = MASS_C*9  + MASS_H*9  + MASS_N   + MASS_O 
-AA_TABLE['R'] = MASS_C*6  + MASS_H*12 + MASS_N*4 + MASS_O 
-AA_TABLE['Y'] = MASS_C*9  + MASS_H*9  + MASS_N   + MASS_O*2 
-AA_TABLE['W'] = MASS_C*11 + MASS_H*10 + MASS_N*2 + MASS_O 
+AA_TABLE['G'] = MASS_C*2  + MASS_H*3  + MASS_N   + MASS_O
+AA_TABLE['A'] = MASS_C*3  + MASS_H*5  + MASS_N   + MASS_O
+AA_TABLE['S'] = MASS_C*3  + MASS_H*5  + MASS_N   + MASS_O*2
+AA_TABLE['P'] = MASS_C*5  + MASS_H*7  + MASS_N   + MASS_O
+AA_TABLE['V'] = MASS_C*5  + MASS_H*9  + MASS_N   + MASS_O
+AA_TABLE['T'] = MASS_C*4  + MASS_H*7  + MASS_N   + MASS_O*2
+AA_TABLE['C'] = MASS_C*3  + MASS_H*5  + MASS_N   + MASS_O   + MASS_S
+AA_TABLE['L'] = MASS_C*6  + MASS_H*11 + MASS_N   + MASS_O
+AA_TABLE['I'] = MASS_C*6  + MASS_H*11 + MASS_N   + MASS_O
+AA_TABLE['N'] = MASS_C*4  + MASS_H*6  + MASS_N*2 + MASS_O*2
+AA_TABLE['D'] = MASS_C*4  + MASS_H*5  + MASS_N   + MASS_O*3
+AA_TABLE['Q'] = MASS_C*5  + MASS_H*8  + MASS_N*2 + MASS_O*2
+AA_TABLE['K'] = MASS_C*6  + MASS_H*12 + MASS_N*2 + MASS_O
+AA_TABLE['E'] = MASS_C*5  + MASS_H*7  + MASS_N   + MASS_O*3
+AA_TABLE['M'] = MASS_C*5  + MASS_H*9  + MASS_N   + MASS_O   + MASS_S
+AA_TABLE['H'] = MASS_C*6  + MASS_H*7  + MASS_N*3 + MASS_O
+AA_TABLE['F'] = MASS_C*9  + MASS_H*9  + MASS_N   + MASS_O
+AA_TABLE['R'] = MASS_C*6  + MASS_H*12 + MASS_N*4 + MASS_O
+AA_TABLE['Y'] = MASS_C*9  + MASS_H*9  + MASS_N   + MASS_O*2
+AA_TABLE['W'] = MASS_C*11 + MASS_H*10 + MASS_N*2 + MASS_O
 
 AMINOS = list(AA_TABLE.keys())
 MASSES = [AA_TABLE[a] for a in AMINOS]
@@ -48,13 +48,13 @@ def calc_rev_ppm(y, ppm):
     return (ppm * 1e-6) * y
 
 def b_series(seq, mods, nterm, cterm, z=1, exclude_end=False, weights={}):
-    ret = ((numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)])) + cterm - MASS_OH + MASS_PROT + (MASS_PROT * (z-1))) / z
+    ret = ((numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq, mods)])) + cterm - MASS_OH + MASS_H + (MASS_H * (z-1))) / z
     if exclude_end:
         ret = ret[:-1]
     return numpy.asarray([[mz, 1 if aa not in weights else weights[aa]] for mz, aa in zip(ret, seq)], dtype='float32')
 
 def y_series(seq, mods, nterm, cterm, z=1, exclude_end=False, weights={}):
-    ret = (numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq[::-1], mods[::-1])]) + cterm + MASS_H + MASS_PROT + (MASS_PROT * (z-1))) / z
+    ret = (numpy.cumsum([MASSES[AMINOS.index(s)] + m for s, m in zip(seq[::-1], mods[::-1])]) + cterm + MASS_H + MASS_H + (MASS_H * (z-1))) / z
     if exclude_end:
         ret = ret[:-1]
     return numpy.asarray([[mz, 1 if aa not in weights else weights[aa]] for mz, aa in zip(ret, seq[::-1])], dtype='float32')

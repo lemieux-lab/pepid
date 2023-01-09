@@ -29,12 +29,12 @@ def handle_response(resp):
             skip_lgt = 1 + 1 + 1
             if resp[0] == 0xfd:
                 msg_lgt = struct.unpack("!I", resp[1:5])[0]
-                log.error("Node: {}".format(resp[1+4:1+4+msg_lgt].decode('utf-8')))
+                blackboard.LOG.error("Node: {}".format(resp[1+4:1+4+msg_lgt].decode('utf-8')))
                 this_ret['error'] = True
                 skip_lgt = 1+4+msg_lgt+1
             elif resp[0] == 0xfc:
                 msg_lgt = struct.unpack("!I", resp[1:5])[0]
-                log.info("Node: {}".format(resp[1+4:1+4+msg_lgt].decode('utf-8')))
+                blackboard.LOG.info("Node: {}".format(resp[1+4:1+4+msg_lgt].decode('utf-8')))
                 this_ret['error'] = False
                 skip_lgt = 1+4+msg_lgt+1
             else:
@@ -111,9 +111,9 @@ def handle_nodes(title, node_specs, tqdm_silence=False, cfg_file=None):
                         progress.update()
                         n_ready += 1 # node init successful
         for sock in errs:
-            log.error("Broken node with invalid error return, quitting")
+            blackboard.LOG.error("Broken node with invalid error return, quitting")
             sys.exit(-2)
-        
+
     progress.close()
 
     n_total_batches = sum([node_spec[2] for node_spec in node_specs])
@@ -150,7 +150,7 @@ def handle_nodes(title, node_specs, tqdm_silence=False, cfg_file=None):
                         progress.update()
                         done_batches[sock_to_type[sock.getpeername()]] += 1
         for sock in errs:
-            log.error("Broken node with invalid error return, quitting")
+            blackboard.LOG.error("Broken node with invalid error return, quitting")
             sys.exit(-2)
 
     progress.close()
@@ -175,7 +175,7 @@ def handle_nodes(title, node_specs, tqdm_silence=False, cfg_file=None):
                     progress.update()
                     n_ready += 1
         for sock in errs:
-            log.error("Broken node with invalid error return, quitting")
+            blackboard.LOG.error("Broken node with invalid error return, quitting")
             sys.exit(-2)
 
     progress.close()

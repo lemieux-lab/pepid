@@ -90,11 +90,8 @@ def tda_fdr(rescored=False):
             best_fdr_idx = i
         else:
             break
-    psm_at_t = 0
-    if best_fdr_idx >= 0:
-       psm_at_t = fdr_index[best_fdr_idx] 
 
-    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max(), int(fdr_limit * 100.), psm_at_t))
+    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max(), int(fdr_limit * 100.), best_fdr_idx+1))
 
     return {
             'n_data': len(grouped_data),
