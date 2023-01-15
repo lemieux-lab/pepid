@@ -31,7 +31,7 @@ include = [
 ]
 
 [project]
-version = "1.0.0"
+version = "1.0.0-1"
 name = "pepid"
 authors = [
     { name="Jeremie Zumer", email="jeremie.zumer@umontreal.ca" },
