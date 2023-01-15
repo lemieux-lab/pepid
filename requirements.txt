@@ -1,5 +1,8 @@
+tables
 numpy
-scipy
 tqdm
+matplotlib
 uuid
 configparser
+scipy
+numba

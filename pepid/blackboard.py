@@ -266,3 +266,6 @@ def lock():
 
 def unlock():
     fcntl.lockf(LOCK, fcntl.LOCK_UN)
+
+def here(path):
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), path)

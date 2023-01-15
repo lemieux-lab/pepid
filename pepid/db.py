@@ -2,14 +2,19 @@ import numpy
 import glob
 import re
 from os import path
-import blackboard
 import math
-import pepid_utils
 import time
 import os
 import random
 import copy
 import pickle
+
+if __package__ is None or __package__ == '':
+    import blackboard
+    import pepid_utils
+else:
+    from . import blackboard
+    from . import pepid_utils
 
 class DbSettings():
     def __init__(self):
@@ -75,7 +80,10 @@ def ml_spectrum(cands):
     Spectrum prediction based on deep learning model
     """
 
-    import spectrum_generator_sparse as spectrum_generator
+    if __package__ is None or __package__ == '':
+        import spectrum_generator_sparse as spectrum_generator
+    else:
+        from . import spectrum_generator_sparse as spectrum_generator
     import torch
 
     global MODEL

@@ -9,7 +9,10 @@ import sys
 import time
 import tqdm
 
-import blackboard
+if __package__ is None or __package__ == '':
+    import blackboard
+else:
+    from . import blackboard
 
 # exit codes:
 # 0: success

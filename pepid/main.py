@@ -1,19 +1,22 @@
 import sys
-import blackboard
 import time
+import os
 
-if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        print("USAGE: {} config.cfg".format(sys.argv[0]))
-        sys.exit(-1)
+if __package__ is None or __package__ == '':
+    import blackboard
+    from blackboard import here
+else:
+    from . import blackboard
+    from .blackboard import here
 
-    blackboard.config.read("data/default.cfg")
-    blackboard.config.read(sys.argv[1])
+def run(cfg):
+    blackboard.config.read(blackboard.here("data/default.cfg"))
+    blackboard.config.read(cfg)
 
     log_level = blackboard.config['logging']['level'].lower()
 
     if blackboard.config['pipeline'].getboolean('search'):
-        proc = blackboard.subprocess(["pepid_search.py", sys.argv[1]])
+        proc = blackboard.subprocess([here("pepid_search.py"), cfg])
         while True:
             ret = proc.poll()
             if ret is not None:
@@ -26,7 +29,7 @@ if __name__ == '__main__':
             sys.exit(ret)
 
     if blackboard.config['pipeline'].getboolean('output'):
-        proc = blackboard.subprocess(["pepid_io.py", sys.argv[1]])
+        proc = blackboard.subprocess([here("pepid_io.py"), cfg])
         while True:
             ret = proc.poll()
             if ret is not None:
@@ -42,7 +45,7 @@ if __name__ == '__main__':
 
     if blackboard.config['pipeline'].getboolean('report'):
         report_name = "gen_fdr_report.py"
-        proc = blackboard.subprocess([report_name, sys.argv[1], "output"])
+        proc = blackboard.subprocess([here(report_name), cfg, "output"])
         while True:
             ret = proc.poll()
             if ret is not None:
@@ -56,7 +59,7 @@ if __name__ == '__main__':
 
     if blackboard.config['pipeline'].getboolean('rescoring'):
         rescorer = blackboard.config['rescoring']['function']
-        proc = blackboard.subprocess(["pepid_rescore.py", sys.argv[1]])
+        proc = blackboard.subprocess([here("pepid_rescore.py"), cfg])
         while True:
             ret = proc.poll()
             if ret is not None:
@@ -70,7 +73,7 @@ if __name__ == '__main__':
 
     if blackboard.config['pipeline'].getboolean('rescoring report'):
         report_name = "gen_fdr_report.py"
-        proc = blackboard.subprocess([report_name, sys.argv[1], "rescored"])
+        proc = blackboard.subprocess([here(report_name), cfg, "rescored"])
         while True:
             ret = proc.poll()
             if ret is not None:
@@ -81,3 +84,10 @@ if __name__ == '__main__':
             if log_level == 'debug':
                 sys.stderr.write("Terminated with error {}\n".format(ret))
             sys.exit(ret)
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print("USAGE: {} config.cfg".format(sys.argv[0]))
+        sys.exit(-1)
+
+    run(sys.argv[1])

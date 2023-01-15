@@ -1,14 +1,19 @@
-import blackboard
 import os
 import time
 import numpy
-import queries
 import sys
 import sqlite3
 
 import struct
 import glob
 import math
+
+if __package__ is None or __package__ == '':
+    import blackboard
+    import queries
+else:
+    from . import blackboard
+    from . import queries
 
 def write_output(start, end):
     """
@@ -80,14 +85,17 @@ def write_output(start, end):
         del conn
 
 if __name__ == '__main__':
-    blackboard.config.read("data/default.cfg")
+    blackboard.config.read(blackboard.here("data/default.cfg"))
     blackboard.config.read(sys.argv[1])
 
     cfg_file = sys.argv[1]
 
     blackboard.setup_constants()
 
-    import pepid_mp 
+    if __package__ is None or __package__ == '':
+        import pepid_mp 
+    else:
+        from . import pepid_mp
 
     log_level = blackboard.config['logging']['level'].lower()
 
@@ -109,7 +117,7 @@ if __name__ == '__main__':
     n_total = len(all_files)
 
     n_batches = math.ceil(n_total / batch_size)
-    spec = [("output_node.py", nworkers, n_batches,
+    spec = [(blackboard.here("output_node.py"), nworkers, n_batches,
                     [struct.pack("!cI{}sc".format(len(blackboard.TMP_PATH)), bytes([0x00]), len(blackboard.TMP_PATH), blackboard.TMP_PATH.encode("utf-8"), "$".encode("utf-8")) for _ in range(nworkers)],
                     [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_total), "$".encode("utf-8")) for b in range(n_batches)],
                     [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(nworkers)])]

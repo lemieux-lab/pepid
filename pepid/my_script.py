@@ -1,5 +1,9 @@
 import numpy
-import blackboard
+
+if __package__ is None or __package__ == '':
+    import blackboard
+else:
+    from . import blackboard
 
 # This is an example user script containing user functions that may be specified in the config
 

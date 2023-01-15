@@ -1,11 +1,16 @@
 import numpy
-import blackboard
 from os import path
 import random
-import pepid_utils
 import time
 import random
 import os
+
+if __package__ is None or __package__ == '':
+    import blackboard
+    import pepid_utils
+else:
+    from . import blackboard
+    from . import pepid_utils
 
 def count_queries():
     """

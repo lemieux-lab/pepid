@@ -4,7 +4,10 @@ import os
 import tqdm
 import math
 
-import blackboard
+if __package__ is None or __package__ == '':
+    import blackboard
+else:
+    from . import blackboard
 
 def tda_fdr(rescored=False):
     fname, fext = blackboard.config['data']['output'].rsplit(".", 1)
@@ -403,7 +406,7 @@ if __name__ == "__main__":
         blackboard.LOG.error("USAGE: {} config.cfg [output|rescored]\n".format(sys.argv[0]))
         sys.exit(-1)
 
-    blackboard.config.read("data/default.cfg")
+    blackboard.config.read(blackboard.here("data/default.cfg"))
     blackboard.config.read(sys.argv[1])
 
     blackboard.setup_constants()
@@ -418,6 +421,8 @@ if __name__ == "__main__":
     fig.tight_layout()
 
     import pickle
+    if not os.path.exists(blackboard.config['report']['out']):
+        os.makedirs(blackboard.config['report']['out'])
     report_pkl_path = os.path.join(blackboard.config['report']['out'], "report_{}_{}.pkl".format(fname.rsplit("/", 1)[-1], sys.argv[2]))
     pickle.dump(stats, open(report_pkl_path, "wb"))
 

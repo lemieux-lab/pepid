@@ -1,0 +1,4 @@
+exclude pepid/old_search.py
+exclude pepid/gen_fdp*
+
+include pepid/ml/__init__.py pepid/ml/spectrum_generator_multi_sparse.py pepid/ml/spectrum_generator_sparse.py pepid/ml/test_model_multi_sparse.py pepid/ml/test_model_sparse.py pepid/ml/train_model_multi_sparse.py pepid/ml/train_model_sparse.py

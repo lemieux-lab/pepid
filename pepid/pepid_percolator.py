@@ -5,8 +5,12 @@ import subprocess
 import re
 import math
 
-import blackboard
-import pepid_mp
+if __package__ is None or __package__ == '':
+    import blackboard
+    import pepid_mp
+else:
+    from . import blackboard
+    from . import pepid_mp
 
 import struct
 import math
@@ -210,7 +214,10 @@ def count_lines(f):
     return il
 
 def rescore(cfg_file):
-    import blackboard
+    if __package__ is None or __package__ == '':
+        import blackboard
+    else:
+        from . import blackboard
     import sys
 
     in_fname = blackboard.config['data']['output']
@@ -252,7 +259,7 @@ def rescore(cfg_file):
         batch_size = blackboard.config['rescoring.percolator'].getint('pin batch size')
         n_total = count_lines(in_fname)
         n_batches = math.ceil(n_total / batch_size)
-        spec = [("pin_node.py", nworkers, n_batches,
+        spec = [(blackboard.here("pin_node.py"), nworkers, n_batches,
                         [struct.pack("!cI{}sc".format(len(blackboard.TMP_PATH)), bytes([0x00]), len(blackboard.TMP_PATH), blackboard.TMP_PATH.encode("utf-8"), "$".encode("utf-8")) for _ in range(nworkers)],
                         [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_total), "$".encode("utf-8")) for b in range(n_batches)],
                         [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(nworkers)])]

@@ -1,9 +1,14 @@
 import sys
-import pepid_utils
-import blackboard
+
+if __package__ is None or __package__ == '':
+    import pepid_utils
+    import blackboard
+else:
+    from . import pepid_utils
+    from . import blackboard
 
 if __name__ == '__main__':
-    blackboard.config.read("data/default.cfg")
+    blackboard.config.read(blackboard.here("data/default.cfg"))
     blackboard.config.read(sys.argv[1])
 
     blackboard.setup_constants()

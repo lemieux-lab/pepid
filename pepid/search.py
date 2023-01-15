@@ -1,11 +1,16 @@
 import numpy
 import numpy.linalg
-import blackboard
-import pepid_utils
 import re
 import numba
 import numba.typed
 import sys
+
+if __package__ is None or __package__ == '':
+    import blackboard
+    import pepid_utils
+else:
+    from . import blackboard
+    from . import pepid_utils
 
 def cosine(cands, q):
     """

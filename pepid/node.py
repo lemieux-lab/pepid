@@ -3,11 +3,15 @@ import socket
 import time
 import random
 import struct
-import blackboard
 import os
 import uuid
 import numpy
 import tempfile
+
+if __package__ is None or __package__ == '':
+    import blackboard
+else:
+    from . import blackboard
 
 # Messages:
 # 0xff: acknowledged, followed by message code being acknowledged
@@ -63,7 +67,7 @@ def init(klass):
     if len(sys.argv) > 1:
         sock = sys.argv[1]
 
-    blackboard.config.read("data/default.cfg")
+    blackboard.config.read(blackboard.here("data/default.cfg"))
 
     if len(sys.argv) == 3:
         blackboard.config.read(sys.argv[2])

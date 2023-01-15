@@ -4,8 +4,12 @@ import numpy
 import pickle
 import glob
 
-import blackboard
-import pepid_mp
+if __package__ is None:
+    import blackboard
+    import pepid_mp
+else:
+    from . import blackboard
+    from . import pepid_mp
 
 import logging
 import os
@@ -18,9 +22,14 @@ def run(cfg_file):
     Entry point
     """
 
-    import queries
-    import db
-    import search
+    if __package__ is None:
+        import queries
+        import db
+        import search
+    else:
+        from . import queries
+        from . import db
+        from . import search
 
     try:
         log.info("Search phases to run: | " + ("Query Processing | " if blackboard.config['processing.query'].getboolean('enabled') else "") +
@@ -69,14 +78,14 @@ def run(cfg_file):
 
                 # Have to use 2 separate steps to ensure that if there are overlaps, the decoys are dropped
                 # The protein-reverse approach generates quite a few overlaps...
-                dbspec = [("db_node.py", dbnodes, n_db_batches,
+                dbspec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
                                             [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
                                             [struct.pack("!cQQI6sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 6, "normal".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
                                             [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
                 dbspecs.append(dbspec)
 
                 if blackboard.config['processing.db'].getboolean('generate decoys'):
-                    dbdecoy_spec = [("db_node.py", dbnodes, n_db_batches,
+                    dbdecoy_spec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
                                                 [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
                                                 [struct.pack("!cQQI5sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 5, "decoy".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
                                                 [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
@@ -93,7 +102,7 @@ def run(cfg_file):
                 batch_size = blackboard.config['processing.query'].getint('batch size')
                 n_query_batches = math.ceil(n_queries / batch_size)
         
-                qspec = [("queries_node.py", qnodes, n_query_batches,
+                qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,
                                 [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
                                 [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
                                 [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])] 
@@ -120,7 +129,7 @@ def run(cfg_file):
                 n_db = db.count_peps()
                 n_db_batches = math.ceil(n_db / db_batch_size)
 
-                dbspec = [("db_node.py", dbnodes, n_db_batches,
+                dbspec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
                                 [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
                                 [struct.pack("!cQQc", bytes([0x02]), b * db_batch_size, min((b+1) * db_batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
                                 [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
@@ -129,7 +138,7 @@ def run(cfg_file):
             if blackboard.config['postprocessing'].getboolean('queries'):
                 q_batch_size = blackboard.config['processing.query'].getint('batch size')
                 n_query_batches = math.ceil(n_queries / q_batch_size)
-                qspec = [("queries_node.py", qnodes, n_query_batches,
+                qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,
                                 [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
                                 [struct.pack("!cQQc", bytes([0x02]), b * q_batch_size, min((b+1) * q_batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
                                 [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
@@ -146,7 +155,7 @@ def run(cfg_file):
         if blackboard.config['scoring'].getboolean('enabled'):
             batch_size = blackboard.config['scoring'].getint('batch size')
             n_search_batches = math.ceil(n_queries / batch_size)
-            sspec = [("search_node.py", snodes, n_search_batches,
+            sspec = [(blackboard.here("search_node.py"), snodes, n_search_batches,
                             [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
                             [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_search_batches)],
                             [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(snodes)])]
@@ -172,7 +181,7 @@ if __name__ == "__main__":
     global cfg_file
     global log
 
-    blackboard.config.read('data/default.cfg')
+    blackboard.config.read(blackboard.here(blackboard.here('data/default.cfg')))
 
     cfg_file = sys.argv[1]
     blackboard.config.read(cfg_file)

@@ -8,9 +8,14 @@ An example config is provided in data/default.cfg: it should be copied somewhere
 python pepid.py <config.cfg>
 ```
 
-Will run pepid. There are no command line arguments, all configuration is done through the configuration script. This makes tracking experimental details much easier.
+Will run pepid. There are no command line arguments, all configuration is done through the configuration script. This makes tracking experimental details much easier. Pepid can also be run programmatically as follows:
 
-Pepid also provides two utility scripts: `pepid_files.py <config.cfg> filetype` will output the paths to files matching a certain pepid artifact type (`report` will give the path to all normal report artifacts). `pepid_compare.py <config.cfg> <analysis1.pkl> <analysis2.pkl>` will plot two analyses on the same graph for easier comparative analysis. It can be used to compare results before/after rescoring, or to compare between two scoring methods, etc.
+```
+import pepid
+pepid.run(<config.cfg>)
+```
+
+In addition to its default search capabilities, pepid provides two utility scripts: `pepid_files.py <config.cfg> filetype` will output the paths to files matching a certain pepid artifact type (`report` will give the path to all normal report artifacts). `pepid_compare.py <config.cfg> <analysis1.pkl> <analysis2.pkl>` will plot two analyses on the same graph for easier comparative analysis. It can be used to compare results before/after rescoring, or to compare between two scoring methods, etc.
 
 IMPORTANT: Pepid relies on numpy for some operations, which in turn relies on a platform BLAS implementation for efficiency. This may result, if running pepid in parallel, in exhausting resource limits (e.g. RLIMIT\_NPROC on linux).
 
@@ -37,6 +42,8 @@ Unlike previous search engines, pepid doesn't limit function customizable to a f
 
 While pepid has some overhead compared to other engines due to its organization, it makes effective use of vectorization and JIT compilation via numba where it counts. Pepid also implements optimizations, such as a simple linear-time version of the hyperscore algorithm, which makes it faster than x!tandem with similar parameters despite being written in python.
 
+![Pepid is faster than X!Tandem with similar search parameters](images/runtime_perf.svg)
+
 ## Scoring Functions
 
 Pepid supports baseline scoring functions based on the popular search engines Comet and X!Tandem with improvements that let it identify significantly more peptides at low FDR in realistic scenarios.
@@ -47,7 +54,7 @@ Pepid differs from those algorithms in a few ways: firstly, many of the paramete
 
 Secondly, pepid expand upons both the xcorr and hyperscore functions in various ways. Among others, pepid implements 3 ppm-based variants of the bin resolution in xcorr, which we find increase identification rates. Pepid also optionally assumes a different hyperscore model where the sum of intensity is assumed to come equivalently from each of the top N (for a user-definable N) peak matches, rather than the default x!tandem assumption of collective provenance.
 
-On the other hand, pepid does not implement the E-score from Comet. Likewise, pepid does not implement the linear fit-based threshold component of X!Tandem (the function `expect_protein` that interacts with the parameter `refine, maximum valid expectation value`). This is because E-score and `expect_protein` defeat TDA-FDR assumptions by modifying the score distribution based on other values than the curent peptide and spectrum.
+On the other hand, pepid does not implement the E-score from Comet. Likewise, pepid does not implement the linear fit-based threshold component of X!Tandem (the function `expect_protein` that interacts with the parameter `refine, maximum valid expectation value`). This is because E-score and `expect_protein` defeat TDA-FDR assumptions by modifying the score distribution based on other values than the curent peptide and spectrum. Pepid intends to be correct first (and will be updated for this purpose over time), so experimenters do not need to worry about the validity of their analysis except in light of their own modifications.
 
 ## Standard Tooling
 
@@ -61,8 +68,8 @@ Pepid also outputs a graphical report that can be used to quickly ascertain the 
 
 ![Pepid with Xcorr on the 1h yeast proteome data (batched runs), comparing before and after rescoring by percolator](images/plot_compare_output_rescored.svg)
 
-## WIP
+## State of the Art Features
 
-Pepid is currently work in progress. Missing elements include a full port and proper integration of deep learning-driven components (spectrum property extraction, theoretical spectrum generation, and more), and an alternative to TDA-FDR evaluation.
+Experimental deep learning-based features are available for experimentation. Future releases will include better supported use of those features.
 
 See upcoming paper for more details.
