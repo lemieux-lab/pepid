@@ -15,9 +15,10 @@ exclude = [
     "pepid/ml/train_model_ci.py",
     "pepid/ml/train_model_out.py",
 
-    "pepid/ml/spectrum_generator.pkl",
-    "pepid/ml/spectrum_generator_ci.pkl",
-    "pepid/ml/spectrum_generator_out.pkl",
+    #"pepid/ml/spectrum_generator.pkl",
+    #"pepid/ml/spectrum_generator_ci.pkl",
+    #"pepid/ml/spectrum_generator_out.pkl",
+    "pepid/ml/*.pkl",
 
     "pepid/old_search.py",
     "pepid/gen_fdp*",

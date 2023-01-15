@@ -17,9 +17,10 @@ pepid.run(<config.cfg>)
 
 In addition to its default search capabilities, pepid provides two utility scripts: `pepid_files.py <config.cfg> filetype` will output the paths to files matching a certain pepid artifact type (`report` will give the path to all normal report artifacts). `pepid_compare.py <config.cfg> <analysis1.pkl> <analysis2.pkl>` will plot two analyses on the same graph for easier comparative analysis. It can be used to compare results before/after rescoring, or to compare between two scoring methods, etc.
 
-IMPORTANT: Pepid relies on numpy for some operations, which in turn relies on a platform BLAS implementation for efficiency. This may result, if running pepid in parallel, in exhausting resource limits (e.g. RLIMIT\_NPROC on linux).
+IMPORTANT:
 
-This can be avoided by setting the right environment variables, at the likely cost of performance (for example: OMP\_NUM\_THREADS=1), or by reducing the amount of processes running in parallel.
+- Pepid relies on numpy for some operations, which in turn relies on a platform BLAS implementation for efficiency. This may result, if running pepid in parallel, in exhausting resource limits (e.g. RLIMIT\_NPROC on linux). This can be avoided by setting the right environment variables, at the likely cost of performance (for example: OMP\_NUM\_THREADS=1), or by reducing the amount of processes running in parallel.
+- The pypi package does not contain the pretrained deep learning models, those have to be obtained separately (either trained locally or downloaded from the github repository at https://github.com/lemieux-lab/pepid)
 
 ## Why Pepid?
 
@@ -30,7 +31,7 @@ Pepid is a search engine that aims to decrease friction for research on peptide 
 
 These capabilities also greatly increase pepid's power and flexibility. For example, while pepid opeterates in parallel to use your CPU and RAM to the best of its ability, it does not currently explicitly support distributed computing. However, the phase-based nature of pepid means it is fairly simple to do the peptide candidate generation once, and then move the generated candidates and a subsampled mgf file on each compute node to run pepid independently for the search step. Then, the search results can all be combined with a simple copy-paste on a 'master' machine that can perform post-search rescoring and analysis.
 
-![Overall Pepid Organization](images/pipeline.svg)
+![Overall Pepid Organization](https://raw.githubusercontent.com/lemieux-lab/pepid/master/images/pipeline.svg)
 
 ## Cutomizable
 
@@ -42,7 +43,7 @@ Unlike previous search engines, pepid doesn't limit function customizable to a f
 
 While pepid has some overhead compared to other engines due to its organization, it makes effective use of vectorization and JIT compilation via numba where it counts. Pepid also implements optimizations, such as a simple linear-time version of the hyperscore algorithm, which makes it faster than x!tandem with similar parameters despite being written in python.
 
-![Pepid is faster than X!Tandem with similar search parameters](images/runtime_perf.svg)
+![Pepid is faster than X!Tandem with similar search parameters](https://raw.githubusercontent.com/lemieux-lab/pepid/master/images/runtime_perf.svg)
 
 ## Scoring Functions
 
@@ -66,7 +67,7 @@ As mentioned previously, pepid stores all PSM data in its database artifacts. It
 
 Pepid also outputs a graphical report that can be used to quickly ascertain the quality of the search results, and helps identify potential sources of bias (such as the well-known peptide length bias in the Xcorr and Hyperscore functions). In addition, pepid offers a utility called `pepid_compare.py` which can be used to plot two different analyses on the same graph for comparison. The output of `pepid_compare.py` to examine rescoring by Percolator is shown below.
 
-![Pepid with Xcorr on the 1h yeast proteome data (batched runs), comparing before and after rescoring by percolator](images/plot_compare_output_rescored.svg)
+![Pepid with Xcorr on the 1h yeast proteome data (batched runs), comparing before and after rescoring by percolator](https://raw.githubusercontent.com/lemieux-lab/pepid/master/images/plot_compare_output_rescored.svg)
 
 ## State of the Art Features
 
