@@ -3,8 +3,8 @@
 
 <svg
    width="104.91225mm"
-   height="60.253887mm"
-   viewBox="0 0 104.91225 60.253887"
+   height="87.33419mm"
+   viewBox="0 0 104.91225 87.33419"
    version="1.1"
    id="svg189476"
    inkscape:version="1.1.1 (3bf5ae0d25, 2021-09-20)"
@@ -28,15 +28,22 @@
      fit-margin-left="0"
      fit-margin-right="0"
      fit-margin-bottom="0"
-     inkscape:zoom="0.6137977"
-     inkscape:cx="-316.06505"
-     inkscape:cy="266.37441"
+     inkscape:zoom="1.1311453"
+     inkscape:cx="32.710209"
+     inkscape:cy="199.35547"
      inkscape:window-width="1920"
      inkscape:window-height="1017"
      inkscape:window-x="0"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
-     inkscape:current-layer="layer1" />
+     inkscape:current-layer="layer1"
+     showguides="true"
+     inkscape:guide-bbox="true">
+    <sodipodi:guide
+       position="-41.401623,24.179175"
+       orientation="0,-1"
+       id="guide254441" />
+  </sodipodi:namedview>
   <defs
      id="defs189473">
     <clipPath
@@ -1166,5 +1173,53 @@
         </g>
       </g>
     </g>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:4.93889px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+       x="-157.46867"
+       y="66.227753"
+       id="text243170"
+       transform="rotate(-90)"><tspan
+         sodipodi:role="line"
+         id="tspan243168"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:4.93889px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="-157.46867"
+         y="66.227753">Comet</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:4.93889px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+       x="-165.54169"
+       y="88.647987"
+       id="text247855"
+       transform="rotate(-90)"><tspan
+         sodipodi:role="line"
+         id="tspan247853"
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:4.93889px;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';font-variant-ligatures:normal;font-variant-caps:normal;font-variant-numeric:normal;font-variant-east-asian:normal;stroke-width:0.264583"
+         x="-165.54169"
+         y="88.647987">X!Tandem</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-size:4.9389px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';stroke-width:0.264583"
+       x="-161.41315"
+       y="110.84828"
+       id="text251715"
+       transform="rotate(-90)"><tspan
+         sodipodi:role="line"
+         id="tspan251713"
+         style="stroke-width:0.264583"
+         x="-161.41315"
+         y="110.84828">IdentiPy</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-size:4.9389px;line-height:1.25;font-family:sans-serif;-inkscape-font-specification:'sans-serif, Normal';stroke-width:0.264583"
+       x="-154.54022"
+       y="133.82385"
+       id="text251719"
+       transform="rotate(-90)"><tspan
+         sodipodi:role="line"
+         id="tspan251717"
+         style="stroke-width:0.264583"
+         x="-154.54022"
+         y="133.82385">Pepid</tspan></text>
   </g>
 </svg>
