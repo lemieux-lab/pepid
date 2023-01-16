@@ -15,6 +15,12 @@ import pepid
 pepid.run(<config.cfg>)
 ```
 
+Or as a module:
+
+```
+python -mpepid <config.cfg>
+```
+
 In addition to its default search capabilities, pepid provides two utility scripts: `pepid_files.py <config.cfg> filetype` will output the paths to files matching a certain pepid artifact type (`report` will give the path to all normal report artifacts). `pepid_compare.py <config.cfg> <analysis1.pkl> <analysis2.pkl>` will plot two analyses on the same graph for easier comparative analysis. It can be used to compare results before/after rescoring, or to compare between two scoring methods, etc.
 
 IMPORTANT:
