@@ -10,80 +10,104 @@ else:
     from .blackboard import here
 
 def run(cfg):
-    blackboard.config.read(blackboard.here("data/default.cfg"))
-    blackboard.config.read(cfg)
+    ret = 0
 
-    log_level = blackboard.config['logging']['level'].lower()
+    try:
+        blackboard.config.read(blackboard.here("data/default.cfg"))
+        blackboard.config.read(cfg)
+        blackboard.setup_constants()
 
-    if blackboard.config['pipeline'].getboolean('search'):
-        proc = blackboard.subprocess([here("pepid_search.py"), cfg])
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-            time.sleep(1) 
+        log_level = blackboard.config['logging']['level'].lower()
 
-        if ret < 0:
-            if log_level == 'debug':
-                sys.stderr.write("Terminated with error {}\n".format(ret))
-            sys.exit(ret)
+        if blackboard.config['pipeline'].getboolean('search'):
+            proc = blackboard.subprocess([here("pepid_search.py"), cfg])
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                time.sleep(1) 
 
-    if blackboard.config['pipeline'].getboolean('output'):
-        proc = blackboard.subprocess([here("pepid_io.py"), cfg])
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-            time.sleep(1) 
+            if ret < 0:
+                if log_level == 'debug':
+                    sys.stderr.write("Terminated with error {}\n".format(ret))
+                raise Exception(ret)
 
-        if ret < 0:
-            if log_level == 'debug':
-                sys.stderr.write("Terminated with error {}\n".format(ret))
-            sys.exit(ret)
+        if blackboard.config['pipeline'].getboolean('postprocess'):
+            proc = blackboard.subprocess([here("pepid_postprocess.py"), cfg])
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                time.sleep(1)
 
+            if ret < 0:
+                if log_level == 'debug':
+                    sys.stderr.write("Terminated with error {}\n".format(ret))
+                raise Exception(ret)
 
+        if blackboard.config['pipeline'].getboolean('output'):
+            proc = blackboard.subprocess([here("pepid_io.py"), cfg])
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                time.sleep(1) 
 
-    if blackboard.config['pipeline'].getboolean('report'):
-        report_name = "gen_fdr_report.py"
-        proc = blackboard.subprocess([here(report_name), cfg, "output"])
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-            time.sleep(1) 
+            if ret < 0:
+                if log_level == 'debug':
+                    sys.stderr.write("Terminated with error {}\n".format(ret))
+                raise Exception(ret)
 
-        if ret < 0:
-            if log_level == 'debug':
-                sys.stderr.write("Terminated with error {}\n".format(ret))
-            sys.exit(ret)
+        if blackboard.config['pipeline'].getboolean('report'):
+            report_name = "gen_fdr_report.py"
+            proc = blackboard.subprocess([here(report_name), cfg, "output"])
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                time.sleep(1) 
 
-    if blackboard.config['pipeline'].getboolean('rescoring'):
-        rescorer = blackboard.config['rescoring']['function']
-        proc = blackboard.subprocess([here("pepid_rescore.py"), cfg])
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-            time.sleep(1) 
+            if ret < 0:
+                if log_level == 'debug':
+                    sys.stderr.write("Terminated with error {}\n".format(ret))
+                raise Exception(ret)
 
-        if ret < 0:
-            if log_level == 'debug':
-                sys.stderr.write("Terminated with error {}\n".format(ret))
-            sys.exit(ret)
+        if blackboard.config['pipeline'].getboolean('rescoring'):
+            rescorer = blackboard.config['rescoring']['function']
+            proc = blackboard.subprocess([here("pepid_rescore.py"), cfg])
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                time.sleep(1) 
 
-    if blackboard.config['pipeline'].getboolean('rescoring report'):
-        report_name = "gen_fdr_report.py"
-        proc = blackboard.subprocess([here(report_name), cfg, "rescored"])
-        while True:
-            ret = proc.poll()
-            if ret is not None:
-                break
-            time.sleep(1) 
+            if ret < 0:
+                if log_level == 'debug':
+                    sys.stderr.write("Terminated with error {}\n".format(ret))
+                raise Exception(ret)
 
-        if ret < 0:
-            if log_level == 'debug':
-                sys.stderr.write("Terminated with error {}\n".format(ret))
-            sys.exit(ret)
+        if blackboard.config['pipeline'].getboolean('rescoring report'):
+            report_name = "gen_fdr_report.py"
+            proc = blackboard.subprocess([here(report_name), cfg, "rescored"])
+            while True:
+                ret = proc.poll()
+                if ret is not None:
+                    break
+                time.sleep(1) 
+
+            if ret < 0:
+                if log_level == 'debug':
+                    sys.stderr.write("Terminated with error {}\n".format(ret))
+                raise Exception(ret)
+
+    finally:
+        if log_level in ['debug', 'info']:
+            sys.stderr.write("Cleaning up...\n")
+        import os
+        os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
+        os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['workdir'], ".lock")))
+
+        sys.exit(ret)
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:

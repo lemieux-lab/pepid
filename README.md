@@ -5,10 +5,10 @@
 An example config is provided in data/default.cfg: it should be copied somewhere and modified to suit user preferences (keys not filled in the user file are taken from the default config).
 
 ```
-python pepid.py <config.cfg>
+python main.py <config.cfg>
 ```
 
-Will run pepid. There are no command line arguments, all configuration is done through the configuration script. This makes tracking experimental details much easier. Pepid can also be run programmatically as follows:
+Will run pepid if executed in the pepid source directory. There are no command line arguments except the configuration filename, all configuration is done through the configuration script. This makes tracking experimental details much easier. Pepid can also be run programmatically as follows:
 
 ```
 import pepid
@@ -78,5 +78,8 @@ Pepid also outputs a graphical report that can be used to quickly ascertain the 
 ## State of the Art Features
 
 Experimental deep learning-based features are available for experimentation. Future releases will include better supported use of those features.
+Pepid includes a peptide length prediction module that can be enabled by adding extensions.predict\_length in preprocessing and extensions.postprocess\_for\_length in postprocessing.
+
+## Citing
 
 See upcoming paper for more details.

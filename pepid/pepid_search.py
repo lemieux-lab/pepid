@@ -31,147 +31,135 @@ def run(cfg_file):
         from . import db
         from . import search
 
-    try:
-        log.info("Search phases to run: | " + ("Query Processing | " if blackboard.config['processing.query'].getboolean('enabled') else "") +
-                                    ("DB Processing | " if blackboard.config['processing.db'].getboolean('enabled') else "") +
-                                    ("Postprocessing | " if blackboard.config['postprocessing'].getboolean('enabled') else "") +
-                                    ("Score | " if blackboard.config['scoring'].getboolean('enabled') else ""))
-        log.info("Preparing Input Databases...")
-        db_paths = []
-        if blackboard.config['processing.query'].getboolean('enabled'):
-            db_paths.append(blackboard.DB_PATH + "_q.sqlite")
-        if blackboard.config['processing.db'].getboolean('enabled'):
-            db_paths.append(blackboard.DB_PATH + "_cands.sqlite")
-        if blackboard.config['scoring'].getboolean('enabled'):
-            db_paths.append(blackboard.DB_PATH + ".sqlite")
-        for p in db_paths:
-            if os.path.exists(p):
-                os.remove(p)
-        blackboard.prepare_connection()
-        if blackboard.config['processing.query'].getboolean('enabled'):
-            queries.prepare_db()
-        if blackboard.config['processing.db'].getboolean('enabled'):
-            db.prepare_db()
-        blackboard.init_results_db()
+    log.info("Search phases to run: | " + ("Query Processing | " if blackboard.config['processing.query'].getboolean('enabled') else "") +
+                                ("DB Processing | " if blackboard.config['processing.db'].getboolean('enabled') else "") +
+                                ("Postprocessing | " if blackboard.config['postprocessing'].getboolean('enabled') else "") +
+                                ("Score | " if blackboard.config['scoring'].getboolean('enabled') else ""))
+    log.info("Preparing Input Databases...")
+    db_paths = []
+    if blackboard.config['processing.query'].getboolean('enabled'):
+        db_paths.append(blackboard.DB_PATH + "_q.sqlite")
+    if blackboard.config['processing.db'].getboolean('enabled'):
+        db_paths.append(blackboard.DB_PATH + "_cands.sqlite")
+    if blackboard.config['scoring'].getboolean('enabled'):
+        db_paths.append(blackboard.DB_PATH + ".sqlite")
+    for p in db_paths:
+        if os.path.exists(p):
+            os.remove(p)
+    blackboard.prepare_connection()
+    if blackboard.config['processing.query'].getboolean('enabled'):
+        queries.prepare_db()
+    if blackboard.config['processing.db'].getboolean('enabled'):
+        db.prepare_db()
+    blackboard.init_results_db()
 
-        if blackboard.config['scoring'].getboolean('enabled'):
-            log.info("Preparing Input Processing Nodes...")
-            
-            qnodes = blackboard.config['processing.query'].getint('workers')
-            dbnodes = blackboard.config['processing.db'].getint('workers')
-            snodes = blackboard.config['scoring'].getint('workers')
-
-            if qnodes < 0 or dbnodes < 0 or snodes < 0:
-                log.fatal("Node settings are query={}, db={}, search={}, but only values 0 or above allowed.".format(qnodes, dbnodes, snodes))
-                sys.exit(-2)
-
-            base_path = blackboard.TMP_PATH
-
-            proc_spec = []
-
-            if blackboard.config['processing.db'].getboolean('enabled'):
-                batch_size = blackboard.config['processing.db'].getint('batch size')
-                n_db = db.count_db()
-                n_db_batches = math.ceil(n_db / batch_size)
-
-                dbspecs = []
-
-                # Have to use 2 separate steps to ensure that if there are overlaps, the decoys are dropped
-                # The protein-reverse approach generates quite a few overlaps...
-                dbspec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
-                                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                                            [struct.pack("!cQQI6sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 6, "normal".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
-                                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
-                dbspecs.append(dbspec)
-
-                if blackboard.config['processing.db'].getboolean('generate decoys'):
-                    dbdecoy_spec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
-                                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                                                [struct.pack("!cQQI5sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 5, "decoy".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
-                                                [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
-                    dbspecs.append(dbdecoy_spec)
-
-                proc_spec = proc_spec
-                for spec in dbspecs:
-                    proc_spec = proc_spec + spec
-
-            if (blackboard.config['processing.query'].getboolean('enabled') and blackboard.config['postprocessing'].getboolean('queries')) or blackboard.config['scoring'].getboolean('enabled'):
-                n_queries = queries.count_queries()
-
-            if blackboard.config['processing.query'].getboolean('enabled'):
-                batch_size = blackboard.config['processing.query'].getint('batch size')
-                n_query_batches = math.ceil(n_queries / batch_size)
+    if blackboard.config['scoring'].getboolean('enabled'):
+        log.info("Preparing Input Processing Nodes...")
         
-                qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,
-                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
-                                [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
-                                [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])] 
+        qnodes = blackboard.config['processing.query'].getint('workers')
+        dbnodes = blackboard.config['processing.db'].getint('workers')
+        snodes = blackboard.config['scoring'].getint('workers')
 
-                proc_spec = proc_spec + qspec
+        if qnodes < 0 or dbnodes < 0 or snodes < 0:
+            log.fatal("Node settings are query={}, db={}, search={}, but only values 0 or above allowed.".format(qnodes, dbnodes, snodes))
+            sys.exit(-2)
 
-            if len(proc_spec) != 0:
-                pepid_mp.handle_nodes("Input Processing", proc_spec, cfg_file=cfg_file, tqdm_silence=tqdm_silence)
+        base_path = blackboard.TMP_PATH
 
-        if blackboard.config['postprocessing'].getboolean('enabled'):
-            idx = 0
+        proc_spec = []
 
-            qnodes = blackboard.config['processing.query'].getint('postprocessing workers')
-            dbnodes = blackboard.config['processing.db'].getint('postprocessing workers')
+        if blackboard.config['processing.db'].getboolean('enabled'):
+            batch_size = blackboard.config['processing.db'].getint('batch size')
+            n_db = db.count_db()
+            n_db_batches = math.ceil(n_db / batch_size)
 
-            if qnodes < 0 or dbnodes < 0:
-                log.fatal("Post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
-                sys.exit(-2)
+            dbspecs = []
 
-            specs = []
+            # Have to use 2 separate steps to ensure that if there are overlaps, the decoys are dropped
+            # The protein-reverse approach generates quite a few overlaps...
+            dbspec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
+                                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                                        [struct.pack("!cQQI6sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 6, "normal".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
+                                        [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
+            dbspecs.append(dbspec)
 
-            if blackboard.config['postprocessing'].getboolean('db'):
-                db_batch_size = blackboard.config['processing.db'].getint('batch size')
-                n_db = db.count_peps()
-                n_db_batches = math.ceil(n_db / db_batch_size)
+            if blackboard.config['processing.db'].getboolean('generate decoys'):
+                dbdecoy_spec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
+                                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                                            [struct.pack("!cQQI5sc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_db), 5, "decoy".encode('utf-8'), "$".encode("utf-8")) for b in range(n_db_batches)],
+                                            [struct.pack("!cc", bytes([0x7f]), "$".encode('utf-8')) for _ in range(dbnodes)])]
+                dbspecs.append(dbdecoy_spec)
 
-                dbspec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
-                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
-                                [struct.pack("!cQQc", bytes([0x02]), b * db_batch_size, min((b+1) * db_batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
-                                [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
-                specs.extend(dbspec)
+            proc_spec = proc_spec
+            for spec in dbspecs:
+                proc_spec = proc_spec + spec
 
-            if blackboard.config['postprocessing'].getboolean('queries'):
-                q_batch_size = blackboard.config['processing.query'].getint('batch size')
-                n_query_batches = math.ceil(n_queries / q_batch_size)
-                qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,
-                                [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
-                                [struct.pack("!cQQc", bytes([0x02]), b * q_batch_size, min((b+1) * q_batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
-                                [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
-                specs.extend(qspec)
+        if (blackboard.config['processing.query'].getboolean('enabled') and blackboard.config['postprocessing'].getboolean('queries')) or blackboard.config['scoring'].getboolean('enabled'):
+            n_queries = queries.count_queries()
 
-            if len(specs) != 0:
-                pepid_mp.handle_nodes("Input Postprocessing", specs, cfg_file=cfg_file, tqdm_silence=tqdm_silence)
+        if blackboard.config['processing.query'].getboolean('enabled'):
+            batch_size = blackboard.config['processing.query'].getint('batch size')
+            n_query_batches = math.ceil(n_queries / batch_size)
+    
+            qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
+                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])] 
 
-        cur = blackboard.CONN.cursor()
-        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
-        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS q.query_mass_idx ON queries (mass ASC);")
-        del cur
+            proc_spec = proc_spec + qspec
 
-        if blackboard.config['scoring'].getboolean('enabled'):
-            batch_size = blackboard.config['scoring'].getint('batch size')
-            n_search_batches = math.ceil(n_queries / batch_size)
-            sspec = [(blackboard.here("search_node.py"), snodes, n_search_batches,
-                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
-                            [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_search_batches)],
-                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(snodes)])]
+        if len(proc_spec) != 0:
+            pepid_mp.handle_nodes("Input Processing", proc_spec, cfg_file=cfg_file, tqdm_silence=tqdm_silence)
 
-            pepid_mp.handle_nodes("Search", sspec, cfg_file=cfg_file, tqdm_silence=tqdm_silence)
+    if blackboard.config['postprocessing'].getboolean('enabled'):
+        idx = 0
 
-    finally:
-        log.info("Cleaning up...")
-        if len(blackboard.TMP_PATH) > 0:
-            os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
-            #os.system("rm -rf {}".format(os.path.join(blackboard.TMP_PATH, "pepidtmp*")))
-            # Note: final db not removed for future reuse
+        qnodes = blackboard.config['processing.query'].getint('postprocessing workers')
+        dbnodes = blackboard.config['processing.db'].getint('postprocessing workers')
 
-            if blackboard.LOCK is not None:
-                blackboard.LOCK.close()
-                os.system("rm -rf {}".format(os.path.join(blackboard.TMP_PATH, ".lock")))
+        if qnodes < 0 or dbnodes < 0:
+            log.fatal("Post-processing node settings are query={}, db={}, but only values 0 or above allowed.".format(qnodes, dbnodes))
+            sys.exit(-2)
+
+        specs = []
+
+        if blackboard.config['postprocessing'].getboolean('db'):
+            db_batch_size = blackboard.config['processing.db'].getint('batch size')
+            n_db = db.count_peps()
+            n_db_batches = math.ceil(n_db / db_batch_size)
+
+            dbspec = [(blackboard.here("db_node.py"), dbnodes, n_db_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(dbnodes)],
+                            [struct.pack("!cQQc", bytes([0x02]), b * db_batch_size, min((b+1) * db_batch_size, n_db), "$".encode('utf-8')) for b in range(n_db_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(dbnodes)])]
+            specs.extend(dbspec)
+
+        if blackboard.config['postprocessing'].getboolean('queries'):
+            q_batch_size = blackboard.config['processing.query'].getint('batch size')
+            n_query_batches = math.ceil(n_queries / q_batch_size)
+            qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,
+                            [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(qnodes)],
+                            [struct.pack("!cQQc", bytes([0x02]), b * q_batch_size, min((b+1) * q_batch_size, n_queries), "$".encode("utf-8")) for b in range(n_query_batches)],
+                            [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(qnodes)])]
+            specs.extend(qspec)
+
+        if len(specs) != 0:
+            pepid_mp.handle_nodes("Input Postprocessing", specs, cfg_file=cfg_file, tqdm_silence=tqdm_silence)
+
+    cur = blackboard.CONN.cursor()
+    blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS c.cand_mass_idx ON candidates (mass ASC);")
+    blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS q.query_mass_idx ON queries (mass ASC);")
+    del cur
+
+    if blackboard.config['scoring'].getboolean('enabled'):
+        batch_size = blackboard.config['scoring'].getint('batch size')
+        n_search_batches = math.ceil(n_queries / batch_size)
+        sspec = [(blackboard.here("search_node.py"), snodes, n_search_batches,
+                        [struct.pack("!cI{}sc".format(len(base_path)), bytes([0x00]), len(base_path), base_path.encode("utf-8"), "$".encode("utf-8")) for _ in range(snodes)],
+                        [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_queries), "$".encode("utf-8")) for b in range(n_search_batches)],
+                        [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(snodes)])]
+
+        pepid_mp.handle_nodes("Search", sspec, cfg_file=cfg_file, tqdm_silence=tqdm_silence)
 
 if __name__ == "__main__":
     if(len(sys.argv) != 2):
