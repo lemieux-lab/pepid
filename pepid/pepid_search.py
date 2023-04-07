@@ -53,6 +53,8 @@ def run(cfg_file):
         db.prepare_db()
     blackboard.init_results_db()
 
+    n_queries = -1
+    base_path = blackboard.TMP_PATH
     if blackboard.config['scoring'].getboolean('enabled'):
         log.info("Preparing Input Processing Nodes...")
         
@@ -63,8 +65,6 @@ def run(cfg_file):
         if qnodes < 0 or dbnodes < 0 or snodes < 0:
             log.fatal("Node settings are query={}, db={}, search={}, but only values 0 or above allowed.".format(qnodes, dbnodes, snodes))
             sys.exit(-2)
-
-        base_path = blackboard.TMP_PATH
 
         proc_spec = []
 
@@ -94,7 +94,7 @@ def run(cfg_file):
             for spec in dbspecs:
                 proc_spec = proc_spec + spec
 
-        if (blackboard.config['processing.query'].getboolean('enabled') and blackboard.config['postprocessing'].getboolean('queries')) or blackboard.config['scoring'].getboolean('enabled'):
+        if (blackboard.config['processing.query'].getboolean('enabled') or blackboard.config['postprocessing'].getboolean('queries')) or blackboard.config['scoring'].getboolean('enabled'):
             n_queries = queries.count_queries()
 
         if blackboard.config['processing.query'].getboolean('enabled'):
@@ -135,6 +135,8 @@ def run(cfg_file):
             specs.extend(dbspec)
 
         if blackboard.config['postprocessing'].getboolean('queries'):
+            if n_queries < 0:
+                n_queries = queries.count_queries()
             q_batch_size = blackboard.config['processing.query'].getint('batch size')
             n_query_batches = math.ceil(n_queries / q_batch_size)
             qspec = [(blackboard.here("queries_node.py"), qnodes, n_query_batches,

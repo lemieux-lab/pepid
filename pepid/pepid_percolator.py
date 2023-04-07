@@ -120,16 +120,17 @@ def generate_pin(start, end):
                     parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
                     if feats is None:
                         feats = list(parsed_metas[-1].keys())
-                    if 'rawscore' in parsed_metas[-1]: # XXX: HACK for comet-like deltLCn feature should depend on config...
-                        scores.append(parsed_metas[-1]['rawscore'])
-                        parsed_metas[-1]['deltLCn'] = 0
+                        if 'score' in feats:
+                            feats.append('deltLCn')
+                    if 'score' in feats: # XXX: HACK for comet-like deltLCn feature should depend on config...
+                        scores.append(parsed_metas[-1]['score'])
 
                 blackboard.lock()
                 pin = open(pin_name, 'a')
 
                 for j, m in enumerate(parsed_metas):
-                    if 'rawscore' in m:
-                        m['deltLCn'] = (m['rawscore'] - numpy.min(scores)) / (m['rawscore'] if m['rawscore'] != 0 else 1)
+                    if 'score' in feats:
+                        m['deltLCn'] = (m['score'] - numpy.min(scores)) / (m['score'] if m['score'] != 0 else 1)
 
                     extraVals = "\t0.0\t0.0"
                     if 'expMass' in m and 'calcMass' in m:
@@ -192,7 +193,7 @@ def rescore(cfg_file):
     cur.execute("SELECT data FROM meta LIMIT 1;")
     one = cur.fetchone()[0]
     feats = [k.strip()[1:-1] for k in map(lambda x: x.strip().split(":")[0], one.strip()[1:-1].split(","))]
-    if 'rawscore' in feats:
+    if 'score' in feats:
         feats.append('deltLCn')
     feats = [x for x in feats if x not in FEATS_BLACKLIST]
 
