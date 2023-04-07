@@ -23,6 +23,9 @@ def tda_fdr(rescored=False):
         import sys
         sys.stderr.write("FATAL: File specified in {} ({}) could not be read\n".format(sys.argv[1], full_fname))
         sys.exit(-1)
+
+    staged = []
+    prev_title = None
     for li, l in enumerate(f):
         if li == 0:
             header = l.strip().split("\t")
@@ -41,8 +44,26 @@ def tda_fdr(rescored=False):
             charge = int(fields[header.index('query_charge')])
             mass = float(fields[header.index('query_mass')])
             seq = fields[header.index('seq')]
+            if title != prev_title:
+                prev_title = title
+                if len(staged) > 0:
+                    idxs = numpy.argsort([s[1] for s in staged])[::-1]
+                    for n, idx in enumerate(idxs):
+                        if n >= topN:
+                            break
+                        data.append(staged[idx])
+                    del idxs
+                    del staged
+                    staged = []
             if not math.isinf(score):
-                data.append((title, score, desc.startswith(decoy_prefix), qrow, candrow, len(seq), charge, mass))
+                staged.append((title, score, desc.startswith(decoy_prefix), qrow, candrow, len(seq), charge, mass))
+
+    idxs = numpy.argsort([s[1] for s in staged])[::-1]
+    for n, idx in enumerate(idxs):
+        if n >= topN:
+            break
+        data.append(staged[idx])
+    del staged
 
     if len(data) == 0:
         import sys # despite top-level import, this is required... wtf???

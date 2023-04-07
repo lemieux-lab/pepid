@@ -21,7 +21,7 @@ class PostNode(node.Node):
     def do(self, msg):
         start, end = struct.unpack("!QQ", msg[:16])
 
-        post_fn = pepid_utils.import_or(blackboard.config['postprocess']['function'], None)
+        post_fn = pepid_utils.import_or(blackboard.config['postsearch']['function'], None)
 
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
@@ -30,7 +30,7 @@ class PostNode(node.Node):
             post_fn(start, end)
             blackboard.CONN.commit()
         else:
-            blackboard.LOG.warning("Could not find postprocessing function '{}', not applying postprocessing".format(blackboard.config['postprocess']['function']))
+            blackboard.LOG.warning("Could not find postprocessing function '{}', not applying postprocessing".format(blackboard.config['postsearch']['function']))
             return
 
     def prepare(self, msg):

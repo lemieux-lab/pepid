@@ -427,6 +427,9 @@ def xcorr_hyperscore(qcands, qs):
 
     return ret
 
+def stub_filter(cands, q):
+    return cands
+
 def search_core(start, end):
     """
     Core search algorithm: collects and finalizes the data, then
@@ -441,6 +444,7 @@ def search_core(start, end):
     shard_level = blackboard.config['scoring'].getint('sharding threshold')
 
     scoring_fn = pepid_utils.import_or(blackboard.config['scoring']['function'], xcorr)
+    select_fn = pepid_utils.import_or(blackboard.config['scoring']['candidate filtering function'], stub_filter)
 
     batch_size = blackboard.config['scoring'].getint('batch size')
 
@@ -505,7 +509,16 @@ def search_core(start, end):
         blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
         
         while True:
-            cand_set = cur.fetchmany(batch_size)
+            raw_set = cur.fetchmany(batch_size)
+            if len(raw_set) == 0:
+                if len(cands[0]) > 0:
+                    res = scoring_fn(cands, quers)
+                    for oq, ocands, ores in zip(quers, cands, res):
+                        rrow = insert(ores, ocands, oq, rrow)
+                break
+            cand_set = select_fn([dict(o) for o in raw_set], q)
+            if len(cand_set) == 0:
+                continue
             cands[-1].extend(cand_set)
             n_cands += len(cand_set)
 
@@ -516,13 +529,6 @@ def search_core(start, end):
                     rrow = insert(ores, ocands, oq, rrow)
                 cands = [[]]
                 quers = [quers[-1]]
-
-            if len(cand_set) == 0:
-                if len(cands[0]) > 0:
-                    res = scoring_fn(cands, quers)
-                    for oq, ocands, ores in zip(quers, cands, res):
-                        rrow = insert(ores, ocands, oq, rrow)
-                break
 
     blackboard.RES_CONN.commit()
     blackboard.META_CONN.commit()

@@ -22,12 +22,11 @@ if __name__ == '__main__':
 
         header = next(f)
         outf.write(header)
-        f.seek(0)
+        f.close()
 
         for data in rescore_fn(sys.argv[1]):
             outf.write("\t".join(list(map(str, data))) + "\n")
 
-        f.close()
         outf.close()
     else:
         blackboard.LOG.warning("No rescoring function specified, not rescoring")

@@ -32,7 +32,7 @@ def run(cfg):
                     sys.stderr.write("Terminated with error {}\n".format(ret))
                 raise Exception(ret)
 
-        if blackboard.config['pipeline'].getboolean('postprocess'):
+        if blackboard.config['pipeline'].getboolean('postsearch'):
             proc = blackboard.subprocess([here("pepid_postprocess.py"), cfg])
             while True:
                 ret = proc.poll()
