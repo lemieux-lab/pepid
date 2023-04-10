@@ -1,6 +1,9 @@
 import numpy
 import time
 import pickle
+#import ujson as deser
+#import pickle as deser
+#import quickle as deser
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -44,19 +47,14 @@ def predict_length(queries):
         if max != 0:
             spec_raw /= max
 
-        extra = query['meta'].data
-
-        batch.append([spec_raw, precmass, extra])
-        if len(batch) % batch_size == 0 or (len(batch) > 0 and iq == len(queries)-1):
+        batch.append([spec_raw, precmass])
+        if (len(batch) % batch_size == 0) or (iq == len(queries)-1):
             spec_batch = numpy.array([b[0] for b in batch])
             precmass_batch = numpy.array([b[1] for b in batch]).reshape((-1, 1)) / 2000.
             out = model(torch.FloatTensor(spec_batch).to(device), torch.FloatTensor(precmass_batch).to(device))
             preds = numpy.exp(out['comb'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy())
             for ib in range(len(batch)):
-                if batch[ib][-1] is not None:
-                    ret.append({'LgtPred': preds[ib], **batch[ib][-1]})
-                else:
-                    ret.append({'LgtPred': preds[ib]})
+                ret.append({'META_LgtPred': pickle.dumps(preds[ib])})
             batch = []
     return ret
 
@@ -77,80 +75,83 @@ def postprocess_for_length(start, end):
     if len(files) == 0:
         return
 
-    meta = [f.replace("pepidpart.sqlite", "pepidpart_meta.sqlite") for f in files]
-
     header = blackboard.RES_COLS
 
     queries_file = blackboard.DB_PATH + "_q.sqlite"
 
-    for fi in range(len(files)):
-        while True:
-            try:
-                conn = sqlite3.connect("file:{}?cache=shared".format(files[fi]), detect_types=1, uri=True, timeout=0.1)
-                conn_meta = sqlite3.connect("file:{}?cache=shared".format(meta[fi]), detect_types=1, uri=True, timeout=0.1)
-                conn_query = sqlite3.connect("file:{}?cache=shared".format(queries_file), detect_types=1, uri=True, timeout=0.1)
-                conn.row_factory = sqlite3.Row
-                conn_meta.row_factory = sqlite3.Row
-                conn_query.row_factory = sqlite3.Row
-                cur = conn.cursor()
-                cur_meta = conn_meta.cursor()
-                cur_query = conn_query.cursor()
-                blackboard.execute(cur, "PRAGMA synchronous=OFF;")
-                blackboard.execute(cur_meta, "PRAGMA synchronous=OFF;")
-                blackboard.execute(cur_query, "PRAGMA synchronous=OFF;")
-                blackboard.execute(cur, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
-                blackboard.execute(cur_meta, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
-                blackboard.execute(cur_query, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
-                break
-            except:
-                time.sleep(1)
-                continue
+    meta_cols = []
+    extension_feats = set(['META_LgtProb', 'META_LgtRelProb', 'META_LgtScore', 'META_LgtRelScore', 'META_LgtDelta', 'META_LgtDeltaAbs', 'META_LgtScoreModel'])
 
-        blackboard.execute(cur, "SELECT qrow, rrow, seq, score FROM results;")
+    conn_query = sqlite3.connect("file:{}?cache=shared".format(queries_file), detect_types=1, uri=True, timeout=0.1)
+    conn_query.row_factory = sqlite3.Row
+    cur_query = conn_query.cursor()
+    blackboard.execute(cur_query, "PRAGMA synchronous=OFF;")
+    blackboard.execute(cur_query, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
+
+    blackboard.execute(cur_query, "SELECT * FROM queries LIMIT 1;")
+    qmeta_cols = ",".join(list(dict(cur_query.fetchone()).keys()))
+
+    for fi in range(len(files)):
+        conn = sqlite3.connect("file:{}?cache=shared".format(files[fi]), detect_types=1, uri=True, timeout=0.1)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        mod_cur = conn.cursor()
+        blackboard.execute(cur, "PRAGMA synchronous=OFF;")
+        blackboard.execute(cur, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
+
+        if len(meta_cols) == 0:
+            blackboard.execute(cur, "SELECT * FROM results LIMIT 1;")
+            meta_cols = list(dict(cur.fetchone()).keys())
+            for feat in extension_feats:
+                if feat not in meta_cols:
+                    cur.execute("ALTER TABLE results ADD COLUMN {} REAL;".format(feat))
+            conn.commit()
+
+        blackboard.execute(cur, "SELECT rowid, * FROM results;")
         fetch_batch_size = 62000 # The maximum batch size supported by the default sqlite engine is a bit more than 62000
 
         while True:
             results_base = cur.fetchmany(fetch_batch_size)
             results_base = [dict(r) for r in results_base]
 
+            blackboard.execute(cur_query, "SELECT rowid, {} FROM queries WHERE rowid IN ({}) ORDER BY rowid ASC;".format(qmeta_cols, ",".join(numpy.unique([str(r['qrow']) for r in results_base]))))
+
+            q = cur_query.fetchall()
+            q = {qq['rowid'] : qq for qq in q}
+
             if len(results_base) == 0:
                 break
 
-            blackboard.execute(cur_meta, "SELECT rrow, data FROM meta WHERE rrow IN ({}) ORDER BY rrow ASC;".format(",".join([str(r['rrow']) for r in results_base])))
-            blackboard.execute(cur_query, "SELECT rowid, meta FROM queries WHERE rowid IN ({}) ORDER BY rowid ASC;".format(",".join(numpy.unique([str(r['qrow']) for r in results_base]))))
-
-            results = cur_meta.fetchall()
-            qmeta = cur_query.fetchall()
-            qmeta = [dict(qm) for qm in qmeta]
-            qmeta = {qm['rowid'] : qm['meta'] for qm in qmeta}
-
             new_meta = []
-            for idata, data in enumerate(results):
-                data = dict(data)
-                cand_lgt = len(results_base[idata]['seq'])
-                m = eval(data['data'])
-                preds = numpy.asarray(qmeta[results_base[idata]['qrow']].data['LgtPred'])
-                m['LgtPred'] = preds.argmax(axis=-1) + length_model.GT_MIN_LGT
-                m['LgtProb'] = preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0
-                m['LgtRelProb'] = m['LgtProb'] / preds.max(axis=-1)
-                m['LgtDelta'] = m['LgtPred'] - cand_lgt
-                m['LgtDeltaAbs'] = abs(m['LgtPred'] - cand_lgt)
-                m['LgtScore'] = m['LgtProb'] * results_base[idata]['score']
-                m['LgtRelScore'] = m['LgtRelProb'] * results_base[idata]['score']
-                new_meta.append({'rrow': data['rrow'], 'data': str(m)})
-            blackboard.executemany(cur_meta, 'UPDATE meta SET data = :data WHERE rrow = :rrow;', new_meta)
-            conn_meta.commit()
+            for idata, data in enumerate(results_base):
+                m = {}
+
+                cand_lgt = len(data['seq'])
+
+                preds = pickle.loads(q[data['qrow']]['META_LgtPred'])
+                #preds = numpy.frombuffer(q[data['qrow']]['LgtPred'], dtype='float32')
+                #m['LgtPred'] = preds.argmax(axis=-1) + length_model.GT_MIN_LGT
+                lgt_prob = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
+                #m['LgtProb'] = preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0
+
+                m['META_LgtRelProb'] = float(lgt_prob / preds.max(axis=-1))
+                m['META_LgtScoreModel'] = float(1 / (1 + numpy.exp(-0.05 * (data['score'] + m['META_LgtRelProb']))))
+                #m['LgtDelta'] = m['LgtPred'] - cand_lgt
+                m['META_LgtDeltaAbs'] = float(abs(preds.argmax(axis=-1) + length_model.GT_MIN_LGT - cand_lgt))
+                #m['LgtScore'] = m['LgtProb'] * results_base[idata]['score']
+                #m['LgtRelScore'] = m['LgtRelProb'] * results_base[idata]['score']
+                new_meta.append({'rowid': data['rowid'], **m})
+            blackboard.executemany(mod_cur, 'UPDATE results SET {} WHERE rowid = :rowid;'.format(",".join(["{} = :{}".format(k, k) for k in new_meta[-1].keys() if k != 'rowid'])), new_meta)
+            conn.commit()
 
         del cur
+        del mod_cur
         del conn
-        del cur_meta
-        del conn_meta
-        del cur_query
-        del conn_query
+        meta_cols = []
 
 def length_filter(cands, query):
-    meta = query['meta'].data
-    best_lgt = meta['LgtPred'].argmax(axis=-1) + 6
+    meta = deser.loads(query['meta'])
+    best_lgt = meta['META_LgtPred'].argmax(axis=-1) + 6
     ret = []
     for c in cands:
         if best_lgt-1 <= c['length'] <= best_lgt+1:

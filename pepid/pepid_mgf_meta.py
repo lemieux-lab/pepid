@@ -59,26 +59,16 @@ def insert_mgf_field(cfg, key):
     cur.execute("PRAGMA synchronous=OFF;")
     cur.execute("PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
 
-    cur.execute("SELECT rowid, * FROM queries ORDER BY rowid;")
+    cur.execute("SELECT * FROM queries LIMIT 1;")
+    header = list(dict(cur.fetchone()).keys())
+    if ('MGF_' + key) not in header:
+        cur.execute("ALTER TABLE queries ADD COLUMN MGF_{} TEXT;".format(key))
 
-    ret = []
+    cur.execute("CREATE INDEX IF NOT EXISTS q_title_idx ON queries (title ASC);")
 
-    while True:
-        queries = cur.fetchmany(620000)
-        if len(queries) == 0:
-            break
-
-        for query in queries:
-            query = dict(query)
-            extra = query['meta'].data
-            if extra is None:
-                extra = {}
-            extra['mgf:' + key] = mgf[query['title']]
-            ret.append({'rowid': query['rowid'], 'data': blackboard.Meta(extra)})
-
-        update_cur.executemany("UPDATE queries SET meta=:data WHERE rowid=:rowid;", ret)
-        conn.commit()
-        ret = []
+    for k in mgf:
+        cur.execute("UPDATE queries SET MGF_{} = ? WHERE title = ?;".format(key), (mgf[k], k))
+    conn.commit()
 
 if __name__ == '__main__':
     import sys

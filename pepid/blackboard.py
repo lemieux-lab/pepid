@@ -14,33 +14,24 @@ import subprocess as sp
 LOG = None
 CONN = None
 RES_CONN = None
-META_CONN = None
 LOCK = None
 
 config = configparser.ConfigParser(inline_comment_prefixes="#")
 
 DB_TYPES = None
 RES_TYPES = None
-META_TYPES = None
 QUERY_TYPES = None
 DB_COLS = None
 RES_COLS = None
-META_COLS = None
 QUERY_COLS = None
 DB_FNAME = None
 RES_DB_FNAME = None
-META_DB_FNAME = None
 DB_PATH = None
 RES_DB_PATH = None
-META_DB_PATH = None
 TMP_PATH = None
 
 # Simple wrapper to hook into the sqlite3 auto-conversion system...
 class Spectrum(object):
-    def __init__(self, x):
-        self.data = x
-
-class Meta(object):
     def __init__(self, x):
         self.data = x
 
@@ -71,10 +62,7 @@ def select_str(table_name, table_cols, extra=""):
 def init_results_db(generate=False, base_dir=None):
     global RES_DB_FNAME
     global RES_DB_PATH
-    global META_DB_FNAME
-    global META_DB_PATH
     global RES_CONN
-    global META_CONN
 
     if base_dir is None:
         base_dir = TMP_PATH
@@ -82,10 +70,8 @@ def init_results_db(generate=False, base_dir=None):
     if generate:
         unique = str(uuid.uuid4())
         RES_DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_{}_pepidpart".format(unique)
-        META_DB_FNAME = RES_DB_FNAME + "_meta.sqlite"
         RES_DB_FNAME = RES_DB_FNAME + ".sqlite"
         RES_DB_PATH = os.path.join(base_dir, RES_DB_FNAME)
-        META_DB_PATH = os.path.join(base_dir, META_DB_FNAME)
 
     RES_CONN = None
     _CONN = None
@@ -110,34 +96,9 @@ def init_results_db(generate=False, base_dir=None):
     execute(cur, create_table_str("main.results", RES_COLS, RES_TYPES))
     RES_CONN.commit()
 
-    META_CONN = None
-    _CONN = None
-    while META_CONN is None:
-        try:
-            _CONN = sqlite3.connect("file:" + META_DB_PATH + "?cache=shared", detect_types=1, uri=True, timeout=0.1)
-            cur = _CONN.cursor()
-            cur.execute("PRAGMA synchronous=OFF;")
-            #cur.execute("PRAGMA temp_store=MEMORY;")
-            cur.execute("PRAGMA temp_store_directory='{}';".format(config['data']['tmpdir']))
-            #cur.execute("PRAGMA journal_mode=WAL;")
-            META_CONN = _CONN
-        except:
-            if _CONN is not None:
-                _CONN.close()
-                _CONN = None
-            time.sleep(0.1)
-            continue
-
-    META_CONN.row_factory = sqlite3.Row
-    cur = META_CONN.cursor()
-    execute(cur, create_table_str("main.meta", META_COLS, META_TYPES))
-    META_CONN.commit()
-
 def setup_constants():
     global RES_COLS
-    global META_COLS
     global RES_TYPES
-    global META_TYPES
     global DB_COLS
     global DB_TYPES
     global QUERY_COLS
@@ -147,8 +108,6 @@ def setup_constants():
     global DB_PATH
     global RES_DB_FNAME
     global RES_DB_PATH
-    global META_DB_FNAME
-    global META_DB_PATH
 
     global TMP_PATH
 
@@ -157,24 +116,21 @@ def setup_constants():
     RES_COLS = ["title", "desc", "seq", "modseq", "score", "query_charge", "query_mass", "cand_mass", "candrow", "qrow", "file", "rrow"]
     RES_TYPES = ["TEXT", "TEXT", "TEXT", "BLOB", "REAL", "INTEGER", "REAL", "REAL", "INTEGER", "INTEGER", "TEXT", "INTEGER"]
 
-    META_COLS = ["qrow", "candrow", "data", "score", "rrow"] # score is used to mirror insertion exclusion via CHECK(score > 0) from the 'data' db
-    META_TYPES = ["INTEGER", "INTEGER", "TEXT", "REAL", "INTEGER"]
+    DB_COLS = ["desc", "decoy", "rt", "length", "mass", "seq", "mods", "spec"]
+    DB_TYPES = ["TEXT", "INTEGER", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM"]
 
-    DB_COLS = ["desc", "decoy", "rt", "length", "mass", "seq", "mods", "spec", "meta"]
-    DB_TYPES = ["TEXT", "INTEGER", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM", "META"]
+    QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass"]
+    QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL"]
 
-    QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
-    QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL", "META"]
+    # NOTE: COLS and TYPES must be adjusted before use for user metadata records.
+    # User columns may not shift after insertion.
 
     sqlite3.register_adapter(Spectrum, lambda x: pickle.dumps(x.data))
-    sqlite3.register_adapter(Meta, lambda x: pickle.dumps(x.data))
     sqlite3.register_converter("spectrum", lambda x: Spectrum(pickle.loads(x)))
-    sqlite3.register_converter("meta", lambda x: Meta(pickle.loads(x)))
     sqlite3.register_converter("autoblob", lambda x: pickle.loads(x))
 
     DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
     RES_DB_FNAME = DB_FNAME + ".sqlite"
-    META_DB_FNAME = DB_FNAME + "_meta.sqlite"
 
     workdir = config['data']['workdir']
     try:
@@ -187,7 +143,6 @@ def setup_constants():
 
     DB_PATH = os.path.join(TMP_PATH, DB_FNAME)
     RES_DB_PATH = DB_PATH + ".sqlite"
-    META_DB_PATH = DB_PATH + "_meta.sqlite"
 
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))

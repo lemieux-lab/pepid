@@ -12,6 +12,16 @@ else:
     from . import blackboard
     from . import pepid_utils
 
+def typemap(x):
+    if x == int:
+        return "INTEGER"
+    elif x == float:
+        return "REAL"
+    elif x == str:
+        return "TEXT"
+    else:
+        return "BLOB"
+
 def cosine(cands, q):
     """
     Simple cosine distance between two spectra.
@@ -83,9 +93,9 @@ def hyperscore(qcands, qs):
             seqs = c['seq']
             seq_mass = c['mass']
 
-            score = 0
+            score = 0.0
             total_matched = 0
-            sumI = 0
+            sumI = 0.0
 
             theoretical = numpy.asarray(theoretical, dtype='float32')[:int((charge-1) * series_count)]
 
@@ -94,7 +104,7 @@ def hyperscore(qcands, qs):
 
             # Select only the best N series/charges/match-lists
             selection = numpy.argsort(series_matches if criterion == 'matches' else sumis)[-max_best:]
-            total_matched = series_matches.sum()
+            total_matched = int(series_matches.sum())
             series_matches = series_matches[selection]
 
             if series_matches.sum() == 0:
@@ -118,12 +128,12 @@ def hyperscore(qcands, qs):
                     score *= m
             score = float(min(score, float_lim))
 
-            logsumI = numpy.log10(sumI) # note: x!tandem uses a factor 4 to multiply this by default
+            logsumI = float(numpy.log10(sumI)) # note: x!tandem uses a factor 4 to multiply this by default
 
             ret[-1].append({"dM": (c['mass'] - q['mass']) / c['mass'],
                         "absdM": abs((c['mass'] - q['mass']) / c['mass']),
                         "peplen": len(c['seq']),
-                        "ionFrac": total_matched / (theoretical.shape[0] * theoretical.shape[1]),
+                        "ionFrac": float(total_matched / (theoretical.shape[0] * theoretical.shape[1])),
                         #'relIntTotMatch': sumI / norm,
                         'charge': int(q['charge']),
                         'z2': int(q['charge'] == 2),
@@ -133,7 +143,7 @@ def hyperscore(qcands, qs):
                         #'xcorr': xcorr,
                         'expMass': q['mass'],
                         'calcMass': c['mass'],
-                'score': score, 'sumI': logsumI, 'total_matched': total_matched, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+                'score': score, 'sumI': float(logsumI), 'total_matched': total_matched, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
     return ret
 
 @numba.njit(locals={'spectrum': numba.float32[:,::1], 'theoretical': numba.float32[:,:,::1], 'acc': numba.float32, 'delta': numba.float32, 'series_count': numba.int32, 'norm': numba.float32, 'spec_idx': numba.int32})
@@ -262,13 +272,13 @@ def xcorr(qcands, qs):
             frag = numpy.ascontiguousarray(frag[:(charge-1)*2])
 
             n_matches = 0
-            score = 0
+            score = 0.0
             n_series = 0
-            sumI = 0
+            sumI = 0.0
             total_lgt = 0
 
             score, sumis, series_matches = xcorr_score(frag, corrected, binned, bin_resolution, bin_ppm and ppm_mode == 'bins', bins, ignore_weights)
-            sumI = sumis.sum()
+            sumI = float(sumis.sum())
             n_matches = series_matches.sum()
 
             n_series = frag.shape[0] // series_count
@@ -291,7 +301,7 @@ def xcorr(qcands, qs):
                             #'xcorr': xcorr,
                             'expMass': q['mass'],
                             'calcMass': c['mass'],
-                            'score': score, 'sumI': sumI, 'total_matched': n_matches, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+                            'score': score, 'sumI': float(sumI), 'total_matched': int(n_matches), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
     return ret
 
 @numba.njit(locals={'scale': numba.int32, 'i': numba.int32, 'bins': numba.float32[::1]})
@@ -450,9 +460,8 @@ def search_core(start, end):
 
     cur = blackboard.CONN.cursor()
     res_cur = blackboard.RES_CONN.cursor()
-    m_cur = blackboard.META_CONN.cursor()
 
-    blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+    blackboard.execute(cur, "SELECT rowid, * FROM queries WHERE rowid BETWEEN ? AND ?;", (start+1, end))
     queries = cur.fetchall()
 
     blackboard.execute(res_cur, "SELECT MAX(rrow) FROM results;")
@@ -465,42 +474,45 @@ def search_core(start, end):
     cands = []
     quers = []
 
+    columns = None
+
     def insert(res, cands, q, rrow):
         nonlocal cur
         nonlocal res_cur
-        nonlocal m_cur
         nonlocal shard_level
         nonlocal fname_prefix
+        nonlocal columns
 
         this_res = []
-        metar = []
         for ii, (r, c) in enumerate(zip(res, cands)):
             if r['score'] <= 0:
                 continue
             else:
-                this_res.append({'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': q['charge'], 'query_mass': q['mass'], 'cand_mass': c['mass'], 'rrow': rrow, 'file': fname_prefix})
-                metar.append({'score': r['score'], 'qrow': q['rowid'], 'candrow': c['rowid'], 'data': str(r), "rrow": rrow})
+                this_res.append({'qrow': q['rowid'],  'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': q['charge'], 'query_mass': q['mass'], 'cand_mass': c['mass'], 'rrow': rrow, 'file': fname_prefix})
+                this_res[-1] = {**this_res[-1], **{("META_" + k): v for k, v in r.items()}}
+                if columns is None:
+                    columns = [('META_' + k, v) for k, v in r.items()]
+                    blackboard.execute(res_cur, "SELECT name FROM pragma_table_info('results');")
+                    header = [k[0] for k in res_cur.fetchall()]
+                    for c in columns:
+                        if c[0] not in header:
+                            blackboard.execute(res_cur, "ALTER TABLE results ADD COLUMN {} {};".format(c[0], typemap(type(c[1]))))
+                    blackboard.RES_CONN.commit()
                 rrow += 1
         if len(this_res) > 0:
-            blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), this_res)
-            blackboard.executemany(m_cur, blackboard.maybe_insert_dict_str("meta", blackboard.META_COLS), metar)
+            blackboard.executemany(res_cur, "INSERT OR IGNORE INTO results ({}) VALUES ({});".format(",".join(this_res[-1].keys()), ",".join([":" + x for x in this_res[-1].keys()])), this_res)
             if rrow > shard_level:
                 rrow = 1
                 blackboard.RES_CONN.commit()
-                blackboard.META_CONN.commit()
                 blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
                 blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
-                blackboard.execute(m_cur, "CREATE INDEX IF NOT EXISTS m_rrow_idx ON meta (rrow ASC);")
                 blackboard.RES_CONN.commit()
-                blackboard.META_CONN.commit()
                 res_cur.close()
-                m_cur.close()
                 blackboard.RES_CONN.close()
-                blackboard.META_CONN.close()
                 blackboard.init_results_db(generate=True, base_dir=blackboard.TMP_PATH)
                 res_cur = blackboard.RES_CONN.cursor()
-                m_cur = blackboard.META_CONN.cursor()
                 fname_prefix = blackboard.RES_DB_FNAME.rsplit(".", 1)[0]
+                columns = None
         return rrow
 
     for iq, q in enumerate(queries):
@@ -531,12 +543,9 @@ def search_core(start, end):
                 quers = [quers[-1]]
 
     blackboard.RES_CONN.commit()
-    blackboard.META_CONN.commit()
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
     blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
-    blackboard.execute(m_cur, "CREATE INDEX IF NOT EXISTS m_rrow_idx ON meta (rrow ASC);")
     blackboard.RES_CONN.commit()
-    blackboard.META_CONN.commit()
 
 def prepare_search():
     """

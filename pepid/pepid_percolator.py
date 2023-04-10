@@ -17,7 +17,7 @@ else:
 import struct
 import math
 
-FEATS_BLACKLIST = set(["seq", "modseq", "title", "desc", "decoy", "file"])
+FEATS_BLACKLIST = set([])
 
 def pout_to_tsv(psmout, psmout_decoys, scores_in):
     scores = {}
@@ -90,8 +90,10 @@ def generate_pin(start, end):
     cur = None
 
     feats = None
+    feats_raw = None
     scores = []
 
+    score_feat_idx = None
     for il, l in enumerate(fin):
         line = l.strip().split("\t")
 
@@ -106,40 +108,45 @@ def generate_pin(start, end):
                     if conn is not None:
                         cur.close()
                         conn.close()
-                    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, prev_db + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
+                    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, prev_db + ".sqlite") + "?cache=shared", detect_types=1, uri=True) 
+                    conn.row_factory = sqlite3.Row
                     cur = conn.cursor()
-
-                cur.execute("SELECT rrow, data FROM meta WHERE rrow in ({}) ORDER BY score DESC;".format(",".join([p[rrow_idx] for p in payload])))
-                metas = cur.fetchall()
-                parsed_metas = []
-
-                for i, (rrow, m) in enumerate(metas):
-                    #meta = eval(m)
-                    #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
-                    # The below is notably faster than eval() (about 2x here)
-                    parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
                     if feats is None:
-                        feats = list(parsed_metas[-1].keys())
+                        blackboard.execute(cur, "SELECT * FROM results LIMIT 1;")
+                        keys = dict(cur.fetchone()).keys()
+                        feats_raw = [k for k in keys if k.startswith("META_")]
+                        feats = [k[len("META_"):] for k in feats_raw]
+                        if 'META_score' in feats_raw:
+                            score_feat_idx = feats_raw.index('META_score')
+                        elif 'score' in feats_raw:
+                            feats.append('score')
+                            score_feat_idx = feats_raw.index('score')
                         if 'score' in feats:
                             feats.append('deltLCn')
-                    if 'score' in feats: # XXX: HACK for comet-like deltLCn feature should depend on config...
-                        scores.append(parsed_metas[-1]['score'])
+
+                blackboard.execute(cur, "SELECT {} FROM results WHERE rrow in ({}) ORDER BY score DESC;".format(",".join(feats_raw), ",".join([p[rrow_idx] for p in payload])))
+                metas = [dict(m) for m in cur.fetchall()]
 
                 blackboard.lock()
                 pin = open(pin_name, 'a')
 
-                for j, m in enumerate(parsed_metas):
+                if 'score' in feats:
+                    for m in metas:
+                        scores.append(m[feats_raw[score_feat_idx]])
+
+                for j, m in enumerate(metas):
                     if 'score' in feats:
-                        m['deltLCn'] = (m['score'] - numpy.min(scores)) / (m['score'] if m['score'] != 0 else 1)
+                        m['deltLCn'] = float((m[feats_raw[score_feat_idx]] - numpy.min(scores)) / (m[feats_raw[score_feat_idx]] if m[feats_raw[score_feat_idx]] != 0 else 1))
 
                     extraVals = "\t0.0\t0.0"
-                    if 'expMass' in m and 'calcMass' in m:
-                        extraVals = "\t{}\t{}".format(m['expMass'], m['calcMass'])
+                    if 'META_expMass' in m and 'META_calcMass' in m:
+                        extraVals = "\t{}\t{}".format(m['META_expMass'], m['META_calcMass'])
 
                     pin.write("{}\t{}\t{}{}".format(payload[j][title_idx], (1 - payload[j][desc_idx].startswith(decoy_prefix)) * 2 - 1, start+title_cnt, extraVals))
 
-                    for k in feats:
-                        pin.write("\t{}".format(numpy.format_float_positional(m[k], trim='0', precision=12))) # percolator breaks if too many digits are provided
+                    for k in m.keys():
+                        if type(m[k]) in set([int, float]):
+                            pin.write("\t{}".format(numpy.format_float_positional(m[k], trim='0', precision=12))) # percolator breaks if too many digits are provided
                     pin.write("\t{}\t{}\n".format("-." + payload[j][seq_idx] + ".-", payload[j][desc_idx]))
 
                 pin.close()
@@ -188,11 +195,17 @@ def rescore(cfg_file):
     first = next(fin).strip().split('\t')
     fin.close()
 
-    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, first[header.index('file')] + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
+    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, first[header.index('file')] + ".sqlite") + "?cache=shared", detect_types=1, uri=True) 
+    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-    cur.execute("SELECT data FROM meta LIMIT 1;")
-    one = cur.fetchone()[0]
-    feats = [k.strip()[1:-1] for k in map(lambda x: x.strip().split(":")[0], one.strip()[1:-1].split(","))]
+    cur.execute("SELECT * FROM results LIMIT 1;")
+    keyvals = [(k, v) for k, v in dict(cur.fetchone()).items()]
+    keys = [kv[0] for kv in keyvals]
+    feats = [keyvals[k][0] for k in range(len(keyvals)) if keyvals[k][0].startswith('META_') and type(keyvals[k][1]) in set([int, float])]
+    feats = [f[len('META_'):] for f in feats]
+    for extra in ['score']:
+        if extra in keys and extra not in feats:
+            feats.append(extra)
     if 'score' in feats:
         feats.append('deltLCn')
     feats = [x for x in feats if x not in FEATS_BLACKLIST]
