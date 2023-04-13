@@ -102,3 +102,35 @@ def import_or(s, default):
         import sys
         sys.stderr.write("Could not find '{}', using default value instead\n".format(s))
         return default
+
+# Requires (matching) scores and labels (is_target) to be sorted by scores in the appropriate direction (i.e. best first, worst last)
+def calc_fdr(scores, is_target):
+    fdrs = []
+
+    n_targets = 0
+    n_decoys = 0
+
+    i = 0
+    while i < len(scores):
+        if is_target[i]:
+            n_targets += 1
+        else:
+            n_decoys += 1
+
+        fdr = n_decoys / max(n_targets, 1)
+        fdrs.append(min(fdr, 1))
+        while is_target[i] and (i < len(scores)-1) and (scores[i] == scores[i+1]):
+            n_targets += 1
+            fdrs.append(min(fdr, 1))
+            i += 1
+        i += 1
+
+    return fdrs
+
+def calc_qval(scores, is_target):
+    fdrs = calc_fdr(scores, is_target)
+    running = fdrs[-1]
+    for i in range(len(fdrs)-1, -1, -1):
+        running = min(running, fdrs[i])
+        fdrs[i] = running
+    return fdrs

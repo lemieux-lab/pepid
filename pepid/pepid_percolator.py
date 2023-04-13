@@ -59,7 +59,7 @@ def generate_pin(start, end):
     suffix = blackboard.config['rescoring']['suffix']
     pin_name = fname + suffix + "_pin.tsv"
 
-    tot_lines = count_lines(in_fname)
+    tot_lines = count_lines(in_fname) - 1 # we will be skipping the first line
     fin = open(in_fname, 'r')
 
     decoy_prefix = blackboard.config['processing.db']['decoy prefix']
@@ -114,7 +114,7 @@ def generate_pin(start, end):
                     if feats is None:
                         blackboard.execute(cur, "SELECT * FROM results LIMIT 1;")
                         keys = dict(cur.fetchone()).keys()
-                        feats_raw = [k for k in keys if k.startswith("META_")]
+                        feats_raw = sorted([k for k in keys if k.startswith("META_")])
                         feats = [k[len("META_"):] for k in feats_raw]
                         if 'META_score' in feats_raw:
                             score_feat_idx = feats_raw.index('META_score')
@@ -144,8 +144,9 @@ def generate_pin(start, end):
 
                     pin.write("{}\t{}\t{}{}".format(payload[j][title_idx], (1 - payload[j][desc_idx].startswith(decoy_prefix)) * 2 - 1, start+title_cnt, extraVals))
 
-                    for k in m.keys():
-                        if type(m[k]) in set([int, float]):
+                    for k in feats_raw + (['deltLCn'] if 'score' in feats else []):
+                        if m[k] is not None and type(m[k]) != str:
+                            assert type(m[k]) in [int, float], "WTF {} {} {}".format(k, m[k], m)
                             pin.write("\t{}".format(numpy.format_float_positional(m[k], trim='0', precision=12))) # percolator breaks if too many digits are provided
                     pin.write("\t{}\t{}\n".format("-." + payload[j][seq_idx] + ".-", payload[j][desc_idx]))
 
@@ -201,7 +202,7 @@ def rescore(cfg_file):
     cur.execute("SELECT * FROM results LIMIT 1;")
     keyvals = [(k, v) for k, v in dict(cur.fetchone()).items()]
     keys = [kv[0] for kv in keyvals]
-    feats = [keyvals[k][0] for k in range(len(keyvals)) if keyvals[k][0].startswith('META_') and type(keyvals[k][1]) in set([int, float])]
+    feats = sorted([keyvals[k][0] for k in range(len(keyvals)) if keyvals[k][0].startswith('META_') and type(keyvals[k][1]) in set([int, float])])
     feats = [f[len('META_'):] for f in feats]
     for extra in ['score']:
         if extra in keys and extra not in feats:

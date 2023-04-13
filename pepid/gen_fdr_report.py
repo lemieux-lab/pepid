@@ -3,6 +3,7 @@ import sys
 import os
 import tqdm
 import math
+import pepid_utils
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -29,7 +30,7 @@ def tda_fdr(rescored=False):
     for li, l in enumerate(f):
         if li == 0:
             header = l.strip().split("\t")
-        if li > 0:
+        else:
             try:
                 fields = l.strip().split("\t")
             except:
@@ -88,40 +89,23 @@ def tda_fdr(rescored=False):
     data.sort(order=['score'])
     data = data[::-1]
 
-    fdr_index = numpy.cumsum(numpy.logical_not(data['decoy']))
-    fdr_levels = numpy.cumsum(data['decoy'].astype('float32')) / numpy.maximum(1, fdr_index)
-    sort_idx = numpy.argsort(fdr_levels)
-    fdr_index = fdr_index[sort_idx]
-    fdr_levels = fdr_levels[sort_idx]
-    lgts = data['lgt'][sort_idx]
-    charges = data['charge'][sort_idx]
-    masses = data['mass'][sort_idx]
-    scores = data['score'][sort_idx]
-    fmax = fdr_index[0]
-    for i in range(len(fdr_index)):
-        fmax = max(fmax, fdr_index[i])
-        fdr_index[i] = fmax
+    fdrs = numpy.asarray(pepid_utils.calc_qval(data['score'], numpy.logical_not(data['decoy'])))
 
-    if len(fdr_levels) == 0:
+    if len(fdrs) == 0:
         blackboard.LOG.warning("Empty fdr levels in fdr report")
-        fdr_levels = numpy.array([0])
-        fdr_index = numpy.array([0])
+        fdrs = numpy.array([0])
 
-    best_fdr_idx = -1
     fdr_limit = float(blackboard.config['report']['fdr threshold'])
-    for i, fv in enumerate(fdr_levels):
-        if fv <= fdr_limit:
-            best_fdr_idx = i
-        else:
-            break
+    aw = numpy.argwhere(fdrs <= fdr_limit)
+    idx = (aw.reshape((-1,))[-1]+1) if len(aw) > 0 else -1
 
-    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; Peptide count over FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdr_levels.min(), fdr_levels.max(), fdr_index.min(), fdr_index.max(), int(fdr_limit * 100.), best_fdr_idx+1))
+    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] > data['score'][idx]).sum() if idx >= 0 else 0))
 
     return {
             'n_data': len(grouped_data),
             'fdr': fdr,
-            'level': best_fdr_idx,
-            'curve': numpy.array(list(zip(fdr_levels, fdr_index))),
+            'level': idx,
+            'curve': numpy.array(list(zip(fdrs, [(data['score'] > s).sum() for s in data['score']]))),
             'decoy scores': data['score'][data['decoy']],
             'target scores': data['score'][numpy.logical_not(data['decoy'])],
             'spectra': data['qrow'],

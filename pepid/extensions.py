@@ -55,6 +55,7 @@ def predict_length(queries):
             preds = numpy.exp(out['comb'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy())
             for ib in range(len(batch)):
                 ret.append({'META_LgtPred': pickle.dumps(preds[ib])})
+                #ret.append({'META_LgtPred': preds[ib]})
             batch = []
     return ret
 
@@ -128,8 +129,8 @@ def postprocess_for_length(start, end):
 
                 cand_lgt = len(data['seq'])
 
-                preds = pickle.loads(q[data['qrow']]['META_LgtPred'])
-                #preds = numpy.frombuffer(q[data['qrow']]['LgtPred'], dtype='float32')
+                #preds = pickle.loads(q[data['qrow']]['META_LgtPred'])
+                preds = numpy.frombuffer(q[data['qrow']]['META_LgtPred'], dtype='float32')
                 #m['LgtPred'] = preds.argmax(axis=-1) + length_model.GT_MIN_LGT
                 lgt_prob = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
                 #m['LgtProb'] = preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0
