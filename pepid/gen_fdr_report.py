@@ -97,29 +97,37 @@ def tda_fdr(rescored=False):
 
     fdr_limit = float(blackboard.config['report']['fdr threshold'])
     aw = numpy.argwhere(fdrs <= fdr_limit)
-    idx = (aw.reshape((-1,))[-1]+1) if len(aw) > 0 else -1
+    idx = min(len(data)-1, aw.reshape((-1,))[-1]+1) if len(aw) > 0 else -1
 
     blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] > data['score'][idx]).sum() if idx >= 0 else 0))
+
+    levels = [0]
+    for s in range(1,len(data)):
+        if data['score'][s] == data['score'][s-1]:
+            levels.append(levels[-1])
+        else:
+            levels.append(levels[-1]+1)
+
 
     return {
             'n_data': len(grouped_data),
             'fdr': fdr,
             'level': idx,
-            'curve': numpy.array(list(zip(fdrs, [(data['score'] > s).sum() for s in data['score']]))),
+            'curve': numpy.array(list(zip(fdrs, levels))),
             'decoy scores': data['score'][data['decoy']],
             'target scores': data['score'][numpy.logical_not(data['decoy'])],
             'spectra': data['qrow'],
             'peptides': data['candrow'],
-            'lgts': lgts,
+            'lgts': data['lgt'],
             'target lgts': data['lgt'][numpy.logical_not(data['decoy'])],
             'decoy lgts': data['lgt'][data['decoy']],
-            'charges': charges,
+            'charges': data['charge'],
             'target charges': data['charge'][numpy.logical_not(data['decoy'])],
             'decoy charges': data['charge'][data['decoy']],
-            'masses': masses,
+            'masses': data['mass'],
             'target masses': data['mass'][numpy.logical_not(data['decoy'])],
             'decoy masses': data['mass'][data['decoy']],
-            'scores': scores,
+            'scores': data['score'],
             }
 
 def plot_report(stats, fdr_limit, index=0, fig_axs=None):

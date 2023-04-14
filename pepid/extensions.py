@@ -81,16 +81,7 @@ def postprocess_for_length(start, end):
     queries_file = blackboard.DB_PATH + "_q.sqlite"
 
     meta_cols = []
-    extension_feats = set(['META_LgtProb', 'META_LgtRelProb', 'META_LgtScore', 'META_LgtRelScore', 'META_LgtDelta', 'META_LgtDeltaAbs', 'META_LgtScoreModel'])
-
-    conn_query = sqlite3.connect("file:{}?cache=shared".format(queries_file), detect_types=1, uri=True, timeout=0.1)
-    conn_query.row_factory = sqlite3.Row
-    cur_query = conn_query.cursor()
-    blackboard.execute(cur_query, "PRAGMA synchronous=OFF;")
-    blackboard.execute(cur_query, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
-
-    blackboard.execute(cur_query, "SELECT * FROM queries LIMIT 1;")
-    qmeta_cols = ",".join(list(dict(cur_query.fetchone()).keys()))
+    extension_feats = set(['META_LgtProb', 'META_LgtRelProb', 'META_LgtPred', 'META_LgtDelta', 'META_LgtDeltaAbs',  'META_LgtProbDeltaBest', 'META_LgtProbDeltaWorst', 'META_LgtProbDeltaNext', 'META_LgtProbDeltaPrev'])
 
     for fi in range(len(files)):
         conn = sqlite3.connect("file:{}?cache=shared".format(files[fi]), detect_types=1, uri=True, timeout=0.1)
@@ -108,17 +99,14 @@ def postprocess_for_length(start, end):
                     cur.execute("ALTER TABLE results ADD COLUMN {} REAL;".format(feat))
             conn.commit()
 
-        blackboard.execute(cur, "SELECT rowid, * FROM results;")
+        blackboard.execute(cur, "CREATE INDEX IF NOT EXISTS qrow_index ON results (qrow);")
+        blackboard.execute(cur, "ATTACH DATABASE ? AS queries;", (queries_file,)) 
+        blackboard.execute(cur, "SELECT r.rowid, r.seq, q.META_LgtPred FROM (SELECT rowid, qrow, seq FROM results) r INNER JOIN (SELECT rowid, META_LgtPred FROM queries) q ON q.rowid = r.qrow ORDER BY r.qrow;")
         fetch_batch_size = 62000 # The maximum batch size supported by the default sqlite engine is a bit more than 62000
 
         while True:
             results_base = cur.fetchmany(fetch_batch_size)
             results_base = [dict(r) for r in results_base]
-
-            blackboard.execute(cur_query, "SELECT rowid, {} FROM queries WHERE rowid IN ({}) ORDER BY rowid ASC;".format(qmeta_cols, ",".join(numpy.unique([str(r['qrow']) for r in results_base]))))
-
-            q = cur_query.fetchall()
-            q = {qq['rowid'] : qq for qq in q}
 
             if len(results_base) == 0:
                 break
@@ -129,15 +117,20 @@ def postprocess_for_length(start, end):
 
                 cand_lgt = len(data['seq'])
 
-                #preds = pickle.loads(q[data['qrow']]['META_LgtPred'])
-                preds = numpy.frombuffer(q[data['qrow']]['META_LgtPred'], dtype='float32')
-                #m['LgtPred'] = preds.argmax(axis=-1) + length_model.GT_MIN_LGT
+                preds = pickle.loads(data['META_LgtPred'])
+                #preds = numpy.frombuffer(q[data['qrow']]['META_LgtPred'], dtype='float32')
+                bests = numpy.argsort(preds, axis=-1)[::-1]
+                m['META_LgtPred'] = float(preds.argmax(axis=-1) + length_model.GT_MIN_LGT)
                 lgt_prob = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
-                #m['LgtProb'] = preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0
 
-                m['META_LgtRelProb'] = float(lgt_prob / preds.max(axis=-1))
-                m['META_LgtScoreModel'] = float(1 / (1 + numpy.exp(-0.05 * (data['score'] + m['META_LgtRelProb']))))
-                #m['LgtDelta'] = m['LgtPred'] - cand_lgt
+                m['META_LgtProb'] = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
+                m['META_LgtRelProb'] = float(m['META_LgtProb'] / preds.max(axis=-1))
+                m['META_LgtProbDeltaBest'] = float(m['META_LgtProb'] - preds[bests[0]])
+                m['META_LgtProbDeltaWorst'] = float(m['META_LgtProb'] - preds[bests[-1]])
+                m['META_LgtProbDeltaPrev'] = float(0 if m['META_LgtProb'] == 0 else (m['META_LgtProb'] - preds[max(preds[bests].tolist().index(preds[cand_lgt - length_model.GT_MIN_LGT]) - 1, 0)]))
+                m['META_LgtProbDeltaNext'] = float(0 if m['META_LgtProb'] == 0 else (m['META_LgtProb'] - preds[min(preds[bests].tolist().index(preds[cand_lgt - length_model.GT_MIN_LGT]) + 1, len(preds)-1)]))
+                #m['META_LgtScoreModel'] = float(1 / (1 + numpy.exp(-0.05 * (data['score'] + m['META_LgtRelProb']))))
+                m['META_LgtDelta'] = float(m['META_LgtPred'] - cand_lgt)
                 m['META_LgtDeltaAbs'] = float(abs(preds.argmax(axis=-1) + length_model.GT_MIN_LGT - cand_lgt))
                 #m['LgtScore'] = m['LgtProb'] * results_base[idata]['score']
                 #m['LgtRelScore'] = m['LgtRelProb'] * results_base[idata]['score']
