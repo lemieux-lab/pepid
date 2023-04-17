@@ -16,16 +16,6 @@ else:
     from . import blackboard
     from . import pepid_utils
 
-def typemap(x):
-    if x == int:
-        return "INTEGER"
-    elif x == float:
-        return "REAL"
-    elif x == str:
-        return "TEXT"
-    else:
-        return "BLOB"
-
 class DbSettings():
     def __init__(self):
         pass
@@ -150,7 +140,7 @@ def theoretical_spectrum(cands):
     return ret
 
 def stub(x):
-    return None
+    return x
 
 def user_processing(start, end):
     """
@@ -166,7 +156,7 @@ def user_processing(start, end):
     spec_fn = pepid_utils.import_or(blackboard.config['processing.db']['spectrum function'], theoretical_spectrum)
     user_fn = pepid_utils.import_or(blackboard.config['processing.db']['postprocessing function'], stub)
 
-    blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS + ['rowid'], "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+    blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     data = cur.fetchall()
     data = list(map(dict, data))
 
@@ -178,30 +168,13 @@ def user_processing(start, end):
     for i in range(len(data)):
         data[i]['spec'] = specs[i]
         data[i]['rt'] = rts[i]
-
-    meta = user_fn(data)
-    if meta is not None and len(meta) > 0:
-        cols = list([(k, v) for k, v in meta[0].items()])
-        keys = [k for k, v in cols]
-        blackboard.execute(cur, "SELECT * FROM candidates LIMIT 1;")
-        header = set(dict(cur.fecthone()[0]).keys())
-        for c in cols:
-            if c[0] not in header:
-                blackboard.execute(cur, "ALTER TABLE candidates ADD COLUMN {} {};".format(c[0], typemap(type(c[1]))))
-        blackboard.CONN.commit()
-        for m, d in zip(meta, data):
-            m['rowid'] = d['rowid']
-            m['spec'] = d['spec']
-            m['rt'] = d['rt']
-            m['mods'] = pickle.dumps(m['mods'])
-            blackboard.execute(cur, "UPDATE candidates SET {} WHERE rowid = :rowid;".format(",".join(["{} = :{}".format(k, k) for k in keys + ['spec', 'rt']])), m)
-
-    else:
-        for d in data:
-            blackboard.execute(cur, "UPDATE candidates SET {} WHERE rowid = :rowid;".format(",".join(["{} = :{}".format(k, k) for k in ['spec', 'rt']])), d)
+    ret = user_fn(data)
+    #rowids = list(range(start+1, end+1))
+    for r in ret:
+        r['mods'] = pickle.dumps(r['mods'])
 
     #blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
-    #blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)
+    blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)
     blackboard.commit()
 
 def process_entry(description, buff, settings):
@@ -284,7 +257,7 @@ def process_entry_core(description, buff, settings, seq_type):
             for var in var_set:
                 mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                 if settings.min_mass <= mass <= settings.max_mass:
-                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None)})
+                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
     return data
 
 def fill_db(start, end, seq_type):

@@ -12,16 +12,6 @@ else:
     from . import blackboard
     from . import pepid_utils
 
-def typemap(x):
-    if x == int:
-        return "INTEGER"
-    elif x == float:
-        return "REAL"
-    elif x == str:
-        return "TEXT"
-    else:
-        return "BLOB"
-
 def count_queries():
     """
     Opens the file speficied in config and counts how many spectra are present.
@@ -60,40 +50,38 @@ def fill_queries(start, end):
             rt = 0.0
             mz_arr = []
             intens_arr = []
-            continue
-
         if entry_idx < start:
             continue
         elif entry_idx >= end:
             break
-
-        if l[:len("TITLE=")] == "TITLE=":
-            title = l[len("TITLE="):].strip()
-        elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
-            rt = float(l[len("RTINSECONDS="):].strip())
-        elif l[:len("CHARGE=")] == "CHARGE=":
-            charge = int(l[len("CHARGE="):].strip().replace("+", ""))
-        elif l[:len("PEPMASS=")] == "PEPMASS=":
-            precmass = float(l[len("PEPMASS="):].split(maxsplit=1)[0])
-        elif l[:len("END IONS")] == "END IONS":
-            precmass = (precmass * charge) - (charge-1)*pepid_utils.MASS_PROT - pepid_utils.MASS_PROT
-            if (min_mass <= precmass <= max_mass) and (min_charge <= charge <= max_charge):
-                data.append({})
-                delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
-                delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
-                data[-1]['title'] = title
-                data[-1]['rt'] = rt
-                data[-1]['charge'] = charge
-                data[-1]['mass'] = precmass
-                data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
-                data[-1]['min_mass'] = precmass + delta_l
-                data[-1]['max_mass'] = precmass + delta_r
-                
-        elif '0' <= l[0] <= '9':
-            mz, intens = l.split(maxsplit=1)
-            mz_arr.append(float(mz))
-            intens_arr.append(float(intens))
-
+        else:
+            if l[:len("TITLE=")] == "TITLE=":
+                title = l[len("TITLE="):].strip()
+            elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
+                rt = float(l[len("RTINSECONDS="):].strip())
+            elif l[:len("CHARGE=")] == "CHARGE=":
+                charge = int(l[len("CHARGE="):].strip().replace("+", ""))
+            elif l[:len("PEPMASS=")] == "PEPMASS=":
+                precmass = float(l[len("PEPMASS="):].split(maxsplit=1)[0])
+            elif l[:len("END IONS")] == "END IONS":
+                precmass = (precmass * charge) - (charge-1)*pepid_utils.MASS_PROT - pepid_utils.MASS_PROT
+                if (min_mass <= precmass <= max_mass) and (min_charge <= charge <= max_charge):
+                    data.append({k:None for k in blackboard.QUERY_COLS})
+                    delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
+                    delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
+                    data[-1]['title'] = title
+                    data[-1]['rt'] = rt
+                    data[-1]['charge'] = charge
+                    data[-1]['mass'] = precmass
+                    data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
+                    data[-1]['min_mass'] = precmass + delta_l
+                    data[-1]['max_mass'] = precmass + delta_r
+                    data[-1]['meta'] = blackboard.Meta(None)
+                    
+            elif '0' <= l[0] <= '9':
+                mz, intens = l.split(maxsplit=1)
+                mz_arr.append(float(mz))
+                intens_arr.append(float(intens))
     cur = blackboard.CONN.cursor()
     blackboard.executemany(cur, blackboard.insert_dict_str("queries", blackboard.QUERY_COLS), data)
     cur.close()
@@ -110,7 +98,8 @@ def user_processing(start, end):
     The query object is a database row, which functions similarly to a database and whose
     keys are as defined in `blackboard.py`
 
-    The output metadata object should be a dictionary, which will be inserted in the DB using the key as column name.
+    The output metadata object should be anything such that eval(expr(metadata)) == metadata, where == is defined
+    in the sense of the user scoring function (metadata is not otherwise consulted).
     """
     
     metadata_fn = pepid_utils.import_or(blackboard.config['processing.query']['postprocessing function'], None)
@@ -118,27 +107,12 @@ def user_processing(start, end):
     if metadata_fn is None:
         return
 
-    columns = None
-
     cur = blackboard.CONN.cursor()
     blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS + ["rowid"], "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     data = cur.fetchall()
     meta = metadata_fn(data)
-
-    if meta is not None and len(meta) > 0:
-        if columns is None:
-            kv = [(k, v) for k, v in meta[0].items()]
-            columns = [k for k, v in kv]
-            blackboard.execute(cur, "SELECT * FROM queries LIMIT 1;")
-            header = cur.fetchone()
-            header = set(dict(header).keys())
-            for c in kv:
-                if c[0] not in header:
-                    blackboard.execute(cur, "ALTER TABLE queries ADD COLUMN {} {};".format(c[0], typemap(type(c[1]))))
-            blackboard.CONN.commit()
-        for m, d in zip(meta, data):
-            m['rowid'] = d['rowid']
-        blackboard.executemany(cur, "UPDATE queries SET {} WHERE rowid = :rowid;".format(",".join(["{} = :{}".format(k, k) for k in columns])), meta)
+    if meta is not None:
+        blackboard.executemany(cur, "UPDATE queries SET meta = ? WHERE rowid = ?;", zip(map(blackboard.Meta, meta), map(lambda x: x['rowid'], data)))
     cur.close()
 
 def prepare_db():

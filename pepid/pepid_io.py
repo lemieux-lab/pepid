@@ -55,20 +55,28 @@ def write_output(start, end):
         fetch_batch_size = 62000 # The maximum batch size supported by the default sqlite engine is a bit more than 62000
 
         prev_key = None
+        prev_scores = None
         prev_payloads = None
         while True:
             results = cur.fetchmany(fetch_batch_size)
-            results = [dict(r) for r in results]
             if len(results) == 0:
                 if prev_key is None:
                     break
+                scores = {prev_key: prev_scores}
+                payloads = {prev_key: prev_payloads}
 
                 blackboard.lock()
                 outf = open(out_fname, 'a')
 
-                for p in prev_payloads:
-                    fields = [str(p[pp]).replace("\t", "    ") for pp in p if pp != 'rowid']
-                    outf.write("\t".join(fields) + "\n")
+                for plk in scores:
+                    idxs = numpy.argsort(scores[plk])[::-1][:max_cands]
+                    for idx in idxs:
+                        datum = payloads[plk][idx]
+                        fields = []
+                        for k in header:
+                            fields.append(str(datum[k]).replace("\t", "    "))
+                        #fields.append(str(data['rowid']))
+                        outf.write("\t".join(fields) + "\n")
 
                 outf.close()
                 blackboard.unlock()
@@ -77,26 +85,44 @@ def write_output(start, end):
             blackboard.lock()
             outf = open(out_fname, 'a')
 
+            # Need a second counting because if we have more than X results with the same score
+            # we end up grabbing it all anyway. Example:
+            # scores 1 1 1 1 1 1 1 1 1 1 1 0.9 0.9 0.9 with top 10:
+            #   We end up selecting (>=) 11 1's instead of the max 10.
+
             import collections
+            scores = collections.defaultdict(list)
             payloads = collections.defaultdict(list)
 
-            if prev_key is not None:
+            if prev_scores is not None:
+                scores[prev_key] = prev_scores
                 payloads[prev_key] = prev_payloads
 
             for idata, data in enumerate(results):
-                if len(payloads[data['qrow']]) >= max_cands:
-                    continue
+                data = dict(data)
+                scores[data['qrow']].append(data['score'])
                 payloads[data['qrow']].append(data)
 
             prev_key = data['qrow']
             prev_payloads = payloads[prev_key]
-            for k in payloads:
-                for p in payloads[k]:
-                    fields = [str(p[pp]).replace("\t", "    ") for pp in p if pp != 'rowid']
+            prev_scores = scores[prev_key]
+            for plk in scores:
+                if plk == prev_key:
+                    continue
+                idxs = numpy.argsort(scores[plk])[::-1][:max_cands]
+                for idx in idxs:
+                    datum = payloads[plk][idx]
+                    fields = []
+                    for k in header:
+                        fields.append(str(datum[k]).replace("\t", "    "))
+                    #fields.append(str(data['rowid']))
                     outf.write("\t".join(fields) + "\n")
 
             outf.close()
             blackboard.unlock()
+
+        del cur
+        del conn
 
 if __name__ == '__main__':
     blackboard.config.read(blackboard.here("data/default.cfg"))

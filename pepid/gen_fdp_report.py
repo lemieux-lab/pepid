@@ -96,13 +96,19 @@ def tda_fdr(rescored=False):
     batch_size = 10000
     for i in range(0, len(ndata), batch_size):
         rowids = [str(x) for x in numpy.unique(ndata['qrow'][i:i+batch_size]).tolist()]
-        qcur.execute("SELECT rowid, MGF_SEQ FROM queries WHERE rowid IN ({}) ORDER BY rowid;".format(",".join(rowids)))
-        meta = {m['rowid'] : m['MGF_SEQ'] for m in qcur.fetchall()}
+        qcur.execute("SELECT rowid, meta FROM queries WHERE rowid IN ({}) ORDER BY rowid;".format(",".join(rowids)))
+        meta = qcur.fetchall()
+        mm = {}
+        for m in meta:
+            mm[m['rowid']] = m['meta'].data
+            if 'mgf:SEQ' not in mm[m['rowid']]:
+                blackboard.LOG.error("Required key 'mgf:SEQ' not found (first error at {})".format(m['rowid']))
+                sys.exit(-2)
 
         for d in ndata[i:i+batch_size]:
-            seq = meta[d['qrow']]
-            d['lgt'] = len(seq.replace("M(ox)", "1"))
-            d['decoy'] = seq.replace("M(ox)", "M[15.994915]").replace("C", "C[57.0215]") != d['seq']
+            meta = mm[d['qrow']]
+            d['lgt'] = len(meta['mgf:SEQ'].replace("M(ox)", "1"))
+            d['decoy'] = meta['mgf:SEQ'].replace("M(ox)", "M[15.994915]").replace("C", "C[57.0215]") != d['seq']
 
     ndata.sort(order=['score'])
     ndata = ndata[::-1]
