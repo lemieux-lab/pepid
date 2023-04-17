@@ -124,8 +124,9 @@ def generate_pin(start, end):
                         if 'score' in feats:
                             feats.append('deltLCn')
 
-                blackboard.execute(cur, "SELECT {} FROM results WHERE rrow in ({}) ORDER BY score DESC;".format(",".join(feats_raw), ",".join([p[rrow_idx] for p in payload])))
-                metas = [dict(m) for m in cur.fetchall()]
+                blackboard.execute(cur, "SELECT {} FROM results WHERE rrow in ({}) ORDER BY rrow, score DESC;".format("rrow," + (",".join(feats_raw)), ",".join([p[rrow_idx] for p in payload])))
+                metas = {m['rrow'] : dict(m) for m in cur.fetchall()}
+                metas = [metas[int(p[rrow_idx])] for p in payload]
 
                 blackboard.lock()
                 pin = open(pin_name, 'a')
@@ -146,7 +147,6 @@ def generate_pin(start, end):
 
                     for k in feats_raw + (['deltLCn'] if 'score' in feats else []):
                         if m[k] is not None and type(m[k]) != str:
-                            assert type(m[k]) in [int, float], "WTF {} {} {}".format(k, m[k], m)
                             pin.write("\t{}".format(numpy.format_float_positional(m[k], trim='0', precision=12))) # percolator breaks if too many digits are provided
                     pin.write("\t{}\t{}\n".format("-." + payload[j][seq_idx] + ".-", payload[j][desc_idx]))
 

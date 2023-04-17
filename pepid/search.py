@@ -504,8 +504,8 @@ def search_core(start, end):
             if rrow > shard_level:
                 rrow = 1
                 blackboard.RES_CONN.commit()
-                blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
-                blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
+                blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_row_idx ON results (rrow ASC, score DESC);")
+                #blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
                 blackboard.RES_CONN.commit()
                 res_cur.close()
                 blackboard.RES_CONN.close()
@@ -543,8 +543,8 @@ def search_core(start, end):
                 quers = [quers[-1]]
 
     blackboard.RES_CONN.commit()
-    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qrow_idx ON results (qrow ASC, score DESC);")
-    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rrow_idx ON results (rrow ASC);")
+    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_rs_idx ON results (rrow ASC, score DESC);")
+    blackboard.execute(res_cur, "CREATE INDEX IF NOT EXISTS res_qs_idx ON results (qrow ASC, score DESC);")
     blackboard.RES_CONN.commit()
 
 def prepare_search():
