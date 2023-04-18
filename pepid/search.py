@@ -4,6 +4,7 @@ import re
 import numba
 import numba.typed
 import sys
+import msgpack
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -120,20 +121,20 @@ def hyperscore(qcands, qs):
 
             logsumI = numpy.log10(sumI) # note: x!tandem uses a factor 4 to multiply this by default
 
-            ret[-1].append({"dM": (c['mass'] - q['mass']) / c['mass'],
-                        "absdM": abs((c['mass'] - q['mass']) / c['mass']),
+            ret[-1].append({"dM": float((c['mass'] - q['mass']) / c['mass']),
+                        "absdM": float(abs((c['mass'] - q['mass']) / c['mass'])),
                         "peplen": len(c['seq']),
-                        "ionFrac": total_matched / (theoretical.shape[0] * theoretical.shape[1]),
+                        "ionFrac": float(total_matched / (theoretical.shape[0] * theoretical.shape[1])),
                         #'relIntTotMatch': sumI / norm,
                         'charge': int(q['charge']),
                         'z2': int(q['charge'] == 2),
                         'z3': int(q['charge'] == 3),
                         'z4': int(q['charge'] == 4),
-                        'rawscore': score,
+                        'rawscore': float(score),
                         #'xcorr': xcorr,
-                        'expMass': q['mass'],
-                        'calcMass': c['mass'],
-                'score': score, 'sumI': logsumI, 'total_matched': total_matched, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+                        'expMass': float(q['mass']),
+                        'calcMass': float(c['mass']),
+                'score': float(score), 'sumI': float(logsumI), 'total_matched': int(total_matched), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
     return ret
 
 @numba.njit(locals={'spectrum': numba.float32[:,::1], 'theoretical': numba.float32[:,:,::1], 'acc': numba.float32, 'delta': numba.float32, 'series_count': numba.int32, 'norm': numba.float32, 'spec_idx': numba.int32})
@@ -278,20 +279,20 @@ def xcorr(qcands, qs):
                 ret[-1].append({'score': 0})
                 continue
             else:
-                ret[-1].append({"dM": (c['mass'] - q['mass']) / c['mass'],
+                ret[-1].append({"dM": float((c['mass'] - q['mass']) / c['mass']),
                             "absdM": abs((c['mass'] - q['mass']) / c['mass']),
                             "peplen": len(c['seq']),
-                            "ionFrac": n_matches / total_lgt,
+                            "ionFrac": float(n_matches / total_lgt),
                             #'relIntTotMatch': sumI / norm,
                             'charge': int(q['charge']),
                             'z2': int(q['charge'] == 2),
                             'z3': int(q['charge'] == 3),
                             'z4': int(q['charge'] == 4),
-                            'rawscore': score,
+                            'rawscore': float(score),
                             #'xcorr': xcorr,
-                            'expMass': q['mass'],
-                            'calcMass': c['mass'],
-                            'score': score, 'sumI': sumI, 'total_matched': n_matches, 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+                            'expMass': float(q['mass']),
+                            'calcMass': float(c['mass']),
+                            'score': float(score), 'sumI': float(sumI), 'total_matched': int(n_matches), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
     return ret
 
 @numba.njit(locals={'scale': numba.int32, 'i': numba.int32, 'bins': numba.float32[::1]})
@@ -423,7 +424,7 @@ def xcorr_hyperscore(qcands, qs):
     ret = [[{**rh, **rx, 'xcorr': rx['score'], 'hyperscore': rh['score']} for rx, rh in zip(retx, reth)] for retx, reth in zip(ret_xcorr, ret_hscore)]
     for re in ret:
         for r in re:
-            r['score'] = max(0, r['xcorr'], numpy.sqrt(numpy.log10(r['hyperscore'] + 1)), r['xcorr'] * numpy.sqrt(numpy.log10(r['hyperscore'] + 1)))
+            r['score'] = float(max(0, r['xcorr'], numpy.sqrt(numpy.log10(r['hyperscore'] + 1)), r['xcorr'] * numpy.sqrt(numpy.log10(r['hyperscore'] + 1))))
 
     return ret
 
@@ -479,7 +480,7 @@ def search_core(start, end):
                 continue
             else:
                 this_res.append({'qrow': q['rowid'], 'matches': r['total_matched'], 'logSumI': r['sumI'], 'candrow': c['rowid'], 'score': r['score'], 'title': r['title'], 'desc': r['desc'], 'modseq': r['modseq'], 'seq': r['seq'], 'query_charge': q['charge'], 'query_mass': q['mass'], 'cand_mass': c['mass'], 'rrow': rrow, 'file': fname_prefix})
-                metar.append({'score': r['score'], 'qrow': q['rowid'], 'candrow': c['rowid'], 'data': str(r), "rrow": rrow})
+                metar.append({'score': r['score'], 'qrow': q['rowid'], 'candrow': c['rowid'], 'data': msgpack.dumps(r), 'extra': msgpack.dumps(None), "rrow": rrow})
                 rrow += 1
         if len(this_res) > 0:
             blackboard.executemany(res_cur, blackboard.maybe_insert_dict_str("results", blackboard.RES_COLS), this_res)

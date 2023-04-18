@@ -3,12 +3,13 @@ import sys
 import os
 import tqdm
 import math
-import pepid_utils
 
 if __package__ is None or __package__ == '':
     import blackboard
+    import pepid_utils
 else:
     from . import blackboard
+    from . import pepid_utils
 
 def tda_fdr(rescored=False):
     fname, fext = blackboard.config['data']['output'].rsplit(".", 1)

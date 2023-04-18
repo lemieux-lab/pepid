@@ -157,8 +157,8 @@ def setup_constants():
     RES_COLS = ["title", "desc", "seq", "modseq", "score", "query_charge", "query_mass", "cand_mass", "candrow", "qrow", "file", "rrow"]
     RES_TYPES = ["TEXT", "TEXT", "TEXT", "BLOB", "REAL", "INTEGER", "REAL", "REAL", "INTEGER", "INTEGER", "TEXT", "INTEGER"]
 
-    META_COLS = ["qrow", "candrow", "data", "score", "rrow"] # score is used to mirror insertion exclusion via CHECK(score > 0) from the 'data' db
-    META_TYPES = ["INTEGER", "INTEGER", "TEXT", "REAL", "INTEGER"]
+    META_COLS = ["qrow", "candrow", "data", "extra", "score", "rrow"] # score is used to mirror insertion exclusion via CHECK(score > 0) from the 'data' db
+    META_TYPES = ["INTEGER", "INTEGER", "BLOB", "BLOB", "REAL", "INTEGER"]
 
     DB_COLS = ["desc", "decoy", "rt", "length", "mass", "seq", "mods", "spec", "meta"]
     DB_TYPES = ["TEXT", "INTEGER", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM", "META"]

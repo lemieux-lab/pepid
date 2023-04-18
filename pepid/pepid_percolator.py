@@ -4,6 +4,7 @@ import numpy
 import subprocess
 import re
 import math
+import msgpack
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -81,6 +82,7 @@ def generate_pin(start, end):
     title_cnt = -1 # +1 happens before lines are added, so have to -1 start at 0 (-1+1)
 
     max_scores = blackboard.config['rescoring'].getint('max scores')
+    use_extra = blackboard.config['rescoring.percolator'].getboolean('use extra')
 
     prev_q = None
     prev_db = None
@@ -109,17 +111,22 @@ def generate_pin(start, end):
                     conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, prev_db + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
                     cur = conn.cursor()
 
-                cur.execute("SELECT rrow, data FROM meta WHERE rrow in ({}) ORDER BY score DESC;".format(",".join([p[rrow_idx] for p in payload])))
+                cur.execute("SELECT rrow, data, extra FROM meta WHERE rrow in ({}) ORDER BY score DESC;".format(",".join([p[rrow_idx] for p in payload])))
                 metas = cur.fetchall()
                 parsed_metas = []
 
-                for i, (rrow, m) in enumerate(metas):
+                for i, (rrow, m, e) in enumerate(metas):
                     #meta = eval(m)
                     #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
                     # The below is notably faster than eval() (about 2x here)
-                    parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
+                    #parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
+                    #parsed_metas.append({k: v for k, v in eval(m).items() if k not in FEATS_BLACKLIST})
+                    parsed_metas.append({k: v for k, v in msgpack.loads(m).items() if k not in FEATS_BLACKLIST})
+                    if use_extra:
+                        extras = msgpack.loads(e)
+                        parsed_metas[-1] = {**parsed_metas[-1], **extras}
                     if feats is None:
-                        feats = list(parsed_metas[-1].keys())
+                        feats = sorted(list(parsed_metas[-1].keys()))
                         if 'score' in feats:
                             feats.append('deltLCn')
                     if 'score' in feats: # XXX: HACK for comet-like deltLCn feature should depend on config...
@@ -171,6 +178,8 @@ def rescore(cfg_file):
         from . import blackboard
     import sys
 
+    use_extra = blackboard.config['rescoring.percolator'].getboolean('use extra')
+
     in_fname = blackboard.config['data']['output']
     fname, fext = in_fname.rsplit('.', 1)
     suffix = blackboard.config['rescoring']['suffix']
@@ -190,9 +199,13 @@ def rescore(cfg_file):
 
     conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, first[header.index('file')] + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
     cur = conn.cursor()
-    cur.execute("SELECT data FROM meta LIMIT 1;")
-    one = cur.fetchone()[0]
-    feats = [k.strip()[1:-1] for k in map(lambda x: x.strip().split(":")[0], one.strip()[1:-1].split(","))]
+    cur.execute("SELECT data, extra FROM meta LIMIT 1;")
+    res = cur.fetchone()
+    first = msgpack.loads(res['data'])
+    if use_extra:
+        second = msgpack.loads(res['meta'])
+        first = {**first, **second}
+    feats = sorted(list(first.keys()))
     if 'score' in feats:
         feats.append('deltLCn')
     feats = [x for x in feats if x not in FEATS_BLACKLIST]

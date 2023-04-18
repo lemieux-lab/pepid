@@ -1,6 +1,6 @@
 import numpy
 import time
-import pickle
+import msgpack
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -51,10 +51,10 @@ def predict_length(queries):
             spec_batch = numpy.array([b[0] for b in batch])
             precmass_batch = numpy.array([b[1] for b in batch]).reshape((-1, 1)) / 2000.
             out = model(torch.FloatTensor(spec_batch).to(device), torch.FloatTensor(precmass_batch).to(device))
-            preds = numpy.exp(out['comb'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy())
+            preds = numpy.exp(out['comb'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy()).tolist()
             for ib in range(len(batch)):
                 if batch[ib][-1] is not None:
-                    ret.append({'LgtPred': preds[ib], **batch[ib][-1]})
+                    ret.append({**batch[ib][-1], 'LgtPred': preds[ib]})
                 else:
                     ret.append({'LgtPred': preds[ib]})
             batch = []
@@ -82,31 +82,33 @@ def postprocess_for_length(start, end):
     header = blackboard.RES_COLS
 
     queries_file = blackboard.DB_PATH + "_q.sqlite"
+    conn_query = sqlite3.connect("file:{}?cache=shared".format(queries_file), detect_types=1, uri=True, timeout=0.1)
+    conn_query.row_factory = sqlite3.Row
+    cur_query = conn_query.cursor()
+    blackboard.execute(cur_query, "PRAGMA synchronous=OFF;")
+    blackboard.execute(cur_query, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
 
     for fi in range(len(files)):
         while True:
             try:
                 conn = sqlite3.connect("file:{}?cache=shared".format(files[fi]), detect_types=1, uri=True, timeout=0.1)
                 conn_meta = sqlite3.connect("file:{}?cache=shared".format(meta[fi]), detect_types=1, uri=True, timeout=0.1)
-                conn_query = sqlite3.connect("file:{}?cache=shared".format(queries_file), detect_types=1, uri=True, timeout=0.1)
                 conn.row_factory = sqlite3.Row
                 conn_meta.row_factory = sqlite3.Row
-                conn_query.row_factory = sqlite3.Row
                 cur = conn.cursor()
                 cur_meta = conn_meta.cursor()
-                cur_query = conn_query.cursor()
+                cur_meta_mod = conn_meta.cursor()
                 blackboard.execute(cur, "PRAGMA synchronous=OFF;")
                 blackboard.execute(cur_meta, "PRAGMA synchronous=OFF;")
-                blackboard.execute(cur_query, "PRAGMA synchronous=OFF;")
                 blackboard.execute(cur, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
                 blackboard.execute(cur_meta, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
-                blackboard.execute(cur_query, "PRAGMA temp_store_directory='{}';".format(blackboard.config['data']['tmpdir']))
                 break
             except:
                 time.sleep(1)
                 continue
 
-        blackboard.execute(cur, "SELECT qrow, rrow, seq, score FROM results;")
+        blackboard.execute(cur, "SELECT qrow, rrow, seq, score FROM results ORDER BY rrow ASC;")
+        blackboard.execute(cur_meta, "SELECT rrow, extra FROM meta ORDER BY rrow ASC;")
         fetch_batch_size = 62000 # The maximum batch size supported by the default sqlite engine is a bit more than 62000
 
         while True:
@@ -116,42 +118,40 @@ def postprocess_for_length(start, end):
             if len(results_base) == 0:
                 break
 
-            blackboard.execute(cur_meta, "SELECT rrow, data FROM meta WHERE rrow IN ({}) ORDER BY rrow ASC;".format(",".join([str(r['rrow']) for r in results_base])))
             blackboard.execute(cur_query, "SELECT rowid, meta FROM queries WHERE rowid IN ({}) ORDER BY rowid ASC;".format(",".join(numpy.unique([str(r['qrow']) for r in results_base]))))
 
-            results = cur_meta.fetchall()
+            results = [dict(r) for r in cur_meta.fetchmany(fetch_batch_size)]
             qmeta = cur_query.fetchall()
             qmeta = [dict(qm) for qm in qmeta]
             qmeta = {qm['rowid'] : qm['meta'] for qm in qmeta}
 
             new_meta = []
             for idata, data in enumerate(results):
-                data = dict(data)
                 cand_lgt = len(results_base[idata]['seq'])
-                m = eval(data['data'])
+                m = msgpack.loads(data['extra'])
+                if m is None:
+                    m = {}
                 preds = numpy.asarray(qmeta[results_base[idata]['qrow']].data['LgtPred'])
                 bests = numpy.argsort(preds, axis=-1)[::-1]
-                m['LgtPred'] = preds.argmax(axis=-1) + length_model.GT_MIN_LGT
-                m['LgtProb'] = preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0
-                m['LgtRelProb'] = m['LgtProb'] / preds.max(axis=-1)
-                m['LgtDelta'] = m['LgtPred'] - cand_lgt
-                m['LgtDeltaAbs'] = abs(m['LgtPred'] - cand_lgt)
-                m['LgtScore'] = m['LgtProb'] * results_base[idata]['score']
-                m['LgtRelScore'] = m['LgtRelProb'] * results_base[idata]['score']
+                m['LgtPred'] = float(preds.argmax(axis=-1) + length_model.GT_MIN_LGT)
+                m['LgtProb'] = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
+                m['LgtRelProb'] = float(m['LgtProb'] / preds.max(axis=-1))
+                m['LgtDelta'] = float(m['LgtPred'] - cand_lgt)
+                m['LgtDeltaAbs'] = float(abs(m['LgtPred'] - cand_lgt))
+                m['LgtScore'] = float(m['LgtProb'] * results_base[idata]['score'])
+                m['LgtRelScore'] = float(m['LgtRelProb'] * results_base[idata]['score'])
                 m['LgtProbDeltaBest'] = float(m['LgtProb'] - preds[bests[0]])
                 m['LgtProbDeltaWorst'] = float(m['LgtProb'] - preds[bests[-1]])
                 m['LgtProbDeltaPrev'] = float(0 if m['LgtProb'] == 0 else (m['LgtProb'] - preds[max(preds[bests].tolist().index(preds[cand_lgt - length_model.GT_MIN_LGT]) - 1, 0)]))
                 m['LgtProbDeltaNext'] = float(0 if m['LgtProb'] == 0 else (m['LgtProb'] - preds[min(preds[bests].tolist().index(preds[cand_lgt - length_model.GT_MIN_LGT]) + 1, len(preds)-1)]))
-                new_meta.append({'rrow': data['rrow'], 'data': str(m)})
-            blackboard.executemany(cur_meta, 'UPDATE meta SET data = :data WHERE rrow = :rrow;', new_meta)
+                new_meta.append({'rrow': data['rrow'], 'data': msgpack.dumps(m)})
+            blackboard.executemany(cur_meta_mod, 'UPDATE meta SET extra = :data WHERE rrow = :rrow;', new_meta)
             conn_meta.commit()
 
         del cur
         del conn
         del cur_meta
         del conn_meta
-        del cur_query
-        del conn_query
 
 def length_filter(cands, query):
     meta = query['meta'].data
