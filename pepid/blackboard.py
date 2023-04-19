@@ -3,7 +3,7 @@ import os
 import sqlite3
 import time
 import uuid
-import pickle
+import msgpack
 import sys
 import fcntl
 
@@ -166,11 +166,11 @@ def setup_constants():
     QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
     QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL", "META"]
 
-    sqlite3.register_adapter(Spectrum, lambda x: pickle.dumps(x.data))
-    sqlite3.register_adapter(Meta, lambda x: pickle.dumps(x.data))
-    sqlite3.register_converter("spectrum", lambda x: Spectrum(pickle.loads(x)))
-    sqlite3.register_converter("meta", lambda x: Meta(pickle.loads(x)))
-    sqlite3.register_converter("autoblob", lambda x: pickle.loads(x))
+    sqlite3.register_adapter(Spectrum, lambda x: msgpack.dumps(x.data))
+    sqlite3.register_adapter(Meta, lambda x: msgpack.dumps(x.data))
+    sqlite3.register_converter("spectrum", lambda x: Spectrum(msgpack.loads(x)))
+    sqlite3.register_converter("meta", lambda x: Meta(msgpack.loads(x)))
+    sqlite3.register_converter("autoblob", lambda x: msgpack.loads(x))
 
     DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
     RES_DB_FNAME = DB_FNAME + ".sqlite"

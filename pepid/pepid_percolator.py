@@ -198,12 +198,13 @@ def rescore(cfg_file):
     fin.close()
 
     conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, first[header.index('file')] + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
+    conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("SELECT data, extra FROM meta LIMIT 1;")
     res = cur.fetchone()
     first = msgpack.loads(res['data'])
     if use_extra:
-        second = msgpack.loads(res['meta'])
+        second = msgpack.loads(res['extra'])
         first = {**first, **second}
     feats = sorted(list(first.keys()))
     if 'score' in feats:

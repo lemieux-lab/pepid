@@ -102,19 +102,16 @@ def tda_fdr(rescored=False):
 
     blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] > data['score'][idx]).sum() if idx >= 0 else 0))
 
-    levels = [0]
-    for s in range(1,len(data)):
-        if data['score'][s] == data['score'][s-1]:
-            levels.append(levels[-1])
-        else:
-            levels.append(levels[-1]+1)
-
+    ufdrs = numpy.unique(fdrs)
+    levels = []
+    for u in ufdrs:
+        levels.append((fdrs <= u).sum())
 
     return {
             'n_data': len(grouped_data),
             'fdr': fdr,
             'level': idx,
-            'curve': numpy.array(list(zip(fdrs, levels))),
+            'curve': numpy.array(list(zip(ufdrs, levels))),
             'decoy scores': data['score'][data['decoy']],
             'target scores': data['score'][numpy.logical_not(data['decoy'])],
             'spectra': data['qrow'],
@@ -203,7 +200,7 @@ HHIIJJ
 
     axs['C'].bar(list(range(10)), dec_stats, alpha=0.7, color=color_all)
 
-    n_unique = len(numpy.unique(stats['peptides'][stats['curve'][:,0] <= fdr_limit]))
+    n_unique = len(numpy.unique(stats['peptides'][:stats['level']]))
     n_all = len(numpy.unique(stats['peptides']))
 
     # Unique peptides, identified spectra
@@ -226,7 +223,7 @@ HHIIJJ
     axs['E'].barh([0, 1], [n_targets, n_decoys], alpha=0.7, color=[color_targets, color_decoys])
 
     # Identified spectra
-    n_spectra_ids = len(numpy.unique(stats['spectra'][stats['curve'][:,0] <= fdr_limit]))
+    n_spectra_ids = len(numpy.unique(stats['spectra'][:stats['level']]))
     n_spectra_no_ids = len(numpy.unique(stats['spectra'])) - n_spectra_ids
 
     axs['F'].set_title("Identified Spectra at {}% FDR\nID: {} No ID: {}".format(int(fdr_limit * 100), n_spectra_ids, n_spectra_no_ids))

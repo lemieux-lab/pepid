@@ -50,38 +50,39 @@ def fill_queries(start, end):
             rt = 0.0
             mz_arr = []
             intens_arr = []
+            continue
+
         if entry_idx < start:
             continue
         elif entry_idx >= end:
             break
-        else:
-            if l[:len("TITLE=")] == "TITLE=":
-                title = l[len("TITLE="):].strip()
-            elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
-                rt = float(l[len("RTINSECONDS="):].strip())
-            elif l[:len("CHARGE=")] == "CHARGE=":
-                charge = int(l[len("CHARGE="):].strip().replace("+", ""))
-            elif l[:len("PEPMASS=")] == "PEPMASS=":
-                precmass = float(l[len("PEPMASS="):].split(maxsplit=1)[0])
-            elif l[:len("END IONS")] == "END IONS":
-                precmass = (precmass * charge) - (charge-1)*pepid_utils.MASS_PROT - pepid_utils.MASS_PROT
-                if (min_mass <= precmass <= max_mass) and (min_charge <= charge <= max_charge):
-                    data.append({k:None for k in blackboard.QUERY_COLS})
-                    delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
-                    delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
-                    data[-1]['title'] = title
-                    data[-1]['rt'] = rt
-                    data[-1]['charge'] = charge
-                    data[-1]['mass'] = precmass
-                    data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
-                    data[-1]['min_mass'] = precmass + delta_l
-                    data[-1]['max_mass'] = precmass + delta_r
-                    data[-1]['meta'] = blackboard.Meta(None)
-                    
-            elif '0' <= l[0] <= '9':
-                mz, intens = l.split(maxsplit=1)
-                mz_arr.append(float(mz))
-                intens_arr.append(float(intens))
+
+        if l[:len("TITLE=")] == "TITLE=":
+            title = l[len("TITLE="):].strip()
+        elif l[:len("RTINSECONDS=")] == "RTINSECONDS=":
+            rt = float(l[len("RTINSECONDS="):].strip())
+        elif l[:len("CHARGE=")] == "CHARGE=":
+            charge = int(l[len("CHARGE="):].strip().replace("+", ""))
+        elif l[:len("PEPMASS=")] == "PEPMASS=":
+            precmass = float(l[len("PEPMASS="):].split(maxsplit=1)[0])
+        elif l[:len("END IONS")] == "END IONS":
+            precmass = (precmass * charge) - (charge-1)*pepid_utils.MASS_PROT - pepid_utils.MASS_PROT
+            if (min_mass <= precmass <= max_mass) and (min_charge <= charge <= max_charge):
+                data.append({k:None for k in blackboard.QUERY_COLS})
+                delta_l = tol_l if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_l)
+                delta_r = tol_r if not is_ppm else pepid_utils.calc_rev_ppm(precmass, tol_r)
+                data[-1]['title'] = title
+                data[-1]['rt'] = rt
+                data[-1]['charge'] = charge
+                data[-1]['mass'] = precmass
+                data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
+                data[-1]['min_mass'] = precmass + delta_l
+                data[-1]['max_mass'] = precmass + delta_r
+                data[-1]['meta'] = blackboard.Meta(None)
+        elif '0' <= l[0] <= '9':
+            mz, intens = l.split(maxsplit=1)
+            mz_arr.append(float(mz))
+            intens_arr.append(float(intens))
     cur = blackboard.CONN.cursor()
     blackboard.executemany(cur, blackboard.insert_dict_str("queries", blackboard.QUERY_COLS), data)
     cur.close()

@@ -6,3 +6,4 @@ uuid
 configparser
 scipy
 numba
+msgpack
