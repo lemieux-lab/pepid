@@ -7,7 +7,7 @@ import time
 import os
 import random
 import copy
-import pickle
+import msgpack
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -171,7 +171,7 @@ def user_processing(start, end):
     ret = user_fn(data)
     #rowids = list(range(start+1, end+1))
     for r in ret:
-        r['mods'] = pickle.dumps(r['mods'])
+        r['mods'] = msgpack.dumps(r['mods'])
 
     #blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
     blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)
@@ -257,7 +257,7 @@ def process_entry_core(description, buff, settings, seq_type):
             for var in var_set:
                 mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                 if settings.min_mass <= mass <= settings.max_mass:
-                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": pickle.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
+                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": msgpack.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
     return data
 
 def fill_db(start, end, seq_type):

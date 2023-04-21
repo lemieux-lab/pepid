@@ -456,9 +456,7 @@ def search_core(start, end):
     blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
     queries = cur.fetchall()
 
-    blackboard.execute(res_cur, "SELECT MAX(rrow) FROM results;")
-    prev_rrow = res_cur.fetchone()[0]
-    rrow = 1 if prev_rrow is None else prev_rrow + 1
+    rrow = 1
 
     fname_prefix = blackboard.RES_DB_FNAME.rsplit(".", 1)[0]
 
@@ -512,10 +510,6 @@ def search_core(start, end):
         while True:
             raw_set = cur.fetchmany(batch_size)
             if len(raw_set) == 0:
-                if len(cands[0]) > 0:
-                    res = scoring_fn(cands, quers)
-                    for oq, ocands, ores in zip(quers, cands, res):
-                        rrow = insert(ores, ocands, oq, rrow)
                 break
             cand_set = select_fn([dict(o) for o in raw_set], q)
             if len(cand_set) == 0:
@@ -530,6 +524,10 @@ def search_core(start, end):
                     rrow = insert(ores, ocands, oq, rrow)
                 cands = [[]]
                 quers = [quers[-1]]
+        if iq == len(queries) and len(cands[-1]) > 0:
+            res = scoring_fn(cands, quers)
+            for oq, ocands, ores in zip(quers, cands, res):
+                rrow = insert(ores, ocands, oq, rrow)
 
     blackboard.RES_CONN.commit()
     blackboard.META_CONN.commit()
