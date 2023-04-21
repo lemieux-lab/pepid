@@ -38,21 +38,21 @@ def pout_to_tsv(psmout, psmout_decoys, scores_in):
                 scores[title] = {}
             scores[title][seq] = score
 
-        scores_in.seek(0)
-        for il, l in enumerate(scores_in):
-            if il == 0:
-                header = l.strip().split("\t")
-                score_idx = header.index("score")
-                title_idx = header.index('title')
-                seq_idx = header.index('modseq')
+    scores_in.seek(0)
+    for il, l in enumerate(scores_in):
+        if il == 0:
+            header = l.strip().split("\t")
+            score_idx = header.index("score")
+            title_idx = header.index('title')
+            seq_idx = header.index('modseq')
+        else:
+            line = l.strip().split("\t")
+            title = line[title_idx]
+            seq = line[seq_idx]
+            if (title not in scores) or (seq not in scores[title]):
+                continue
             else:
-                line = l.strip().split("\t")
-                title = line[title_idx]
-                seq = line[seq_idx]
-                if (title not in scores) or (seq not in scores[title]):
-                    continue
-                else:
-                    yield line[:score_idx] + [scores[title][seq]] + line[score_idx+1:]
+                yield line[:score_idx] + [scores[title][seq]] + line[score_idx+1:]
 
 def generate_pin(start, end):
     in_fname = blackboard.config['data']['output']
