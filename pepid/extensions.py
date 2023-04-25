@@ -60,6 +60,21 @@ def predict_length(queries):
             batch = []
     return ret
 
+def insert_gt_length(queries):
+    ret = []
+    for iq, query in enumerate(queries):
+        extra = query['meta'].data
+        if 'mgf:SEQ' not in extra:
+            blackboard.LOG.error("Missing key 'mgf:SEQ' for insert_gt_length. Did you forget to run pepid_mgf_meta?")
+            sys.exit(-2)
+        else:
+            lgt = len(extra['mgf:SEQ'].replace("M(ox)", "1"))
+            pred = numpy.zeros((40-6+1), dtype='float32')
+            pred[lgt-6] = 1.
+            extra['LgtPred'] = pred.tolist()
+        ret.append(extra)
+    return ret
+
 def postprocess_for_length(start, end):
     import glob
     import os
