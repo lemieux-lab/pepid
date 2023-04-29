@@ -16,15 +16,15 @@ def predict_length(queries):
     import torch
 
     if __package__ is None or __package__ == '':
-        from ml import length_comb_plus as length_model
+        from ml import best_lgt_model as length_model
     else:
-        from .ml import length_comb_plus as length_model
+        from .ml import best_lgt_model as length_model
 
     global model
     if model is None:      
         model = length_model.Model()
         model.to(device)
-        model.load_state_dict(torch.load(blackboard.here('ml/best_nice_redo_ft1.pkl'), map_location=device))
+        model.load_state_dict(torch.load(blackboard.here('ml/best_lgt_model.pkl'), map_location=device))
 
     ret = []
     batch = []
@@ -51,7 +51,7 @@ def predict_length(queries):
             spec_batch = numpy.array([b[0] for b in batch])
             precmass_batch = numpy.array([b[1] for b in batch]).reshape((-1, 1)) / 2000.
             out = model(torch.FloatTensor(spec_batch).to(device), torch.FloatTensor(precmass_batch).to(device))
-            preds = numpy.exp(out['comb'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy()).tolist()
+            preds = numpy.exp(out['pred'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy()).tolist()
             for ib in range(len(batch)):
                 if batch[ib][-1] is not None:
                     ret.append({**batch[ib][-1], 'LgtPred': preds[ib]})
@@ -81,9 +81,9 @@ def postprocess_for_length(start, end):
     import sqlite3
 
     if __package__ is None or __package__ == '':
-        from ml import length_reg_pt as length_model
+        from ml import best_lgt_model as length_model
     else:
-        from .ml import length_reg_pt as length_model
+        from .ml import best_lgt_model as length_model
 
     fname_pattern = list(filter(lambda x: len(x) > 0, blackboard.config['data']['database'].split('/')))[-1].rsplit('.', 1)[0] + "_*_pepidpart.sqlite"
     fname_path = os.path.join(blackboard.TMP_PATH, fname_pattern)
@@ -170,10 +170,16 @@ def postprocess_for_length(start, end):
 
 def length_filter(cands, query):
     meta = query['meta'].data
-    best_lgt = meta['LgtPred'].argmax(axis=-1) + 6
+
+    best_lgts = numpy.argsort(meta['LgtPred'])[::-1] + 6
+
     ret = []
     for c in cands:
-        if best_lgt-1 <= c['length'] <= best_lgt+1:
+        probs = numpy.asarray([meta['LgtPred'][b-6] for b in best_lgts])
+        if (probs[c['length']-6] >= 0.25):
+            if c['length'] in best_lgts[:2]:
+                ret.append(c)
+        else:
             ret.append(c)
     return ret
 
