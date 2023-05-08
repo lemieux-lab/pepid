@@ -59,7 +59,7 @@ def tda_fdr(rescored=False):
             if title != prev_title:
                 prev_title = title
                 if len(staged) > 0:
-                    idxs = numpy.argsort([s[1] for s in staged])[::-1]
+                    idxs = numpy.argsort([s[2] for s in staged])[::-1]
                     for n, idx in enumerate(idxs):
                         if n >= topN:
                             break
@@ -68,9 +68,9 @@ def tda_fdr(rescored=False):
                     del staged
                     staged = []
             if not math.isinf(score):
-                staged.append((title, score, desc.startswith(decoy_prefix), fields[header.index('modseq')], qrow, candrow, len(seq), charge, mass))
+                staged.append((title, seq, score, desc.startswith(decoy_prefix), fields[header.index('modseq')], qrow, candrow, len(seq), charge, mass))
 
-    idxs = numpy.argsort([s[1] for s in staged])[::-1]
+    idxs = numpy.argsort([s[2] for s in staged])[::-1]
     for n, idx in enumerate(idxs):
         if n >= topN:
             break
@@ -82,7 +82,7 @@ def tda_fdr(rescored=False):
         blackboard.LOG.error("FATAL: No entries in {}!\n".format(full_fname))
         sys.exit(-1)
 
-    dtype = [('title', object), ('score', numpy.float64), ('decoy', bool), ('seq', object), ('qrow', numpy.int64), ('candrow', numpy.int64), ('lgt', numpy.int32), ('charge', numpy.int32), ('mass', numpy.float32)]
+    dtype = [('title', object), ('seq', object), ('score', numpy.float64), ('decoy', bool), ('modseq', object), ('qrow', numpy.int64), ('candrow', numpy.int64), ('lgt', numpy.int32), ('charge', numpy.int32), ('mass', numpy.float32)]
     ndata = numpy.array(data, dtype=dtype)
     ndata.sort(order=['qrow'])
 
@@ -108,7 +108,7 @@ def tda_fdr(rescored=False):
         for d in ndata[i:i+batch_size]:
             meta = mm[d['qrow']]
             d['lgt'] = len(meta['mgf:SEQ'].replace("M(ox)", "1"))
-            d['decoy'] = meta['mgf:SEQ'].replace("M(ox)", "M[15.994915]").replace("C", "C[57.0215]") != d['seq']
+            d['decoy'] = meta['mgf:SEQ'].replace("M(ox)", "M[15.994915]").replace("C", "C[57.0215]") != d['modseq']
 
     ndata.sort(order=['score'])
     ndata = ndata[::-1]
@@ -137,6 +137,7 @@ def tda_fdr(rescored=False):
     idx = min(len(data)-1, aw.reshape((-1,))[-1]+1) if len(aw) > 0 else -1
 
     blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] > data['score'][idx]).sum() if idx >= 0 else 0))
+    blackboard.LOG.info("Unique peps@{}%: {}".format(int(fdr_limit * 100.), len(numpy.unique(data[(data['score'] > data['score'][idx])]['seq'])) if idx >= 0 else 0))
 
     ufdrs = numpy.unique(fdrs)
     levels = []

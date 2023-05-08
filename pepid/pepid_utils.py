@@ -134,3 +134,95 @@ def calc_qval(scores, is_target):
         running = min(running, fdrs[i])
         fdrs[i] = running
     return fdrs
+
+def tsv_to_pin(header, lines, start=0):
+    import blackboard
+    import sqlite3
+    import os
+    import msgpack
+
+    feats = None
+
+    score_idx = header.index('score')
+    file_idx = header.index('file')
+    rrow_idx = header.index('rrow')
+    qrow_idx = header.index('qrow')
+    seq_idx = header.index('modseq')
+    title_idx = header.index('title')
+    desc_idx = header.index('desc')
+
+    prev_db = None
+    prev_title = None
+    cnt = 0
+
+    max_scores = blackboard.config['misc.tsv_to_pin'].getint('max scores')
+    use_extra = blackboard.config['misc.tsv_to_pin'].getboolean('use extra')
+    decoy_prefix = blackboard.config['processing.db']['decoy prefix']
+
+    prev_db = None
+
+    conn = None
+    cur = None
+
+    feats = None
+    scores = []
+
+    out_lines = []
+
+    newlines = []
+    for qlines in lines:
+        idxs = numpy.argsort([float(line[score_idx]) for line in qlines])[::-1][:max_scores]
+        newlines.append([qlines[idx] for idx in idxs])
+    lines = newlines
+
+    extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
+    if extra_fn != 'None':
+        extra_fn = import_or(extra_fn, None)
+    else:
+        extra_fn = None
+
+    user_extra = None
+    if extra_fn is not None:
+        user_extra = extra_fn(lines)
+
+    for il, qlines in enumerate(lines):
+        if len(qlines) == 0:
+            break
+        out_lines.append([])
+        if conn is not None:
+            cur.close()
+            conn.close()
+        conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, qlines[0][file_idx] + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
+        cur = conn.cursor()
+
+        cur.execute("SELECT rrow, data, extra FROM meta WHERE rrow in ({}) ORDER BY score DESC;".format(",".join([line[rrow_idx] for line in qlines])))
+        metas = cur.fetchall()
+        parsed_metas = []
+
+        for i, (rrow, m, e) in enumerate(metas):
+            parsed_metas.append({k: v for k, v in msgpack.loads(m).items() if type(v) != str})
+            if use_extra:
+                extras = msgpack.loads(e)
+                parsed_metas[-1] = {**parsed_metas[-1], **extras}
+            if user_extra is not None:
+                parsed_metas[-1] = {**parsed_metas[-1], **user_extra[i]}
+            if feats is None:
+                feats = sorted(list(parsed_metas[-1].keys()))
+                if 'score' in feats:
+                    feats.append('deltLCn')
+            if 'score' in feats: # XXX: HACK for comet-like deltLCn feature should depend on config...
+                scores.append(parsed_metas[-1]['score'])
+
+        for j, m in enumerate(parsed_metas):
+            if 'score' in feats:
+                m['deltLCn'] = (m['score'] - numpy.min(scores)) / (m['score'] if m['score'] != 0 else 1)
+
+            extraVals = [0.0, 0.0]
+            if 'expMass' in m and 'calcMass' in m:
+                extraVals = [m['expMass'], m['calcMass']]
+
+            out_lines[-1].append(list(map(str, [qlines[j][title_idx], (1 - qlines[j][desc_idx].startswith(decoy_prefix)) * 2 - 1, start+il, *extraVals])))
+
+            out_lines[-1][-1].extend(list(map(lambda k: numpy.format_float_positional(m[k], trim='0', precision=12), feats))) # percolator breaks if too many digits are provided
+            out_lines[-1][-1].extend(["-." + qlines[j][seq_idx] + ".-", qlines[j][desc_idx]])
+    return out_lines

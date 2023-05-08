@@ -18,8 +18,6 @@ else:
 import struct
 import math
 
-FEATS_BLACKLIST = set(["seq", "modseq", "title", "desc", "decoy", "file"])
-
 def pout_to_tsv(psmout, psmout_decoys, scores_in):
     scores = {}
     for which in [psmout, psmout_decoys]:
@@ -53,117 +51,6 @@ def pout_to_tsv(psmout, psmout_decoys, scores_in):
                 continue
             else:
                 yield line[:score_idx] + [scores[title][seq]] + line[score_idx+1:]
-
-def generate_pin(start, end):
-    in_fname = blackboard.config['data']['output']
-    fname, fext = in_fname.rsplit('.', 1)
-    suffix = blackboard.config['rescoring']['suffix']
-    pin_name = fname + suffix + "_pin.tsv"
-
-    tot_lines = count_lines(in_fname) - 1 # we will be skipping the first line
-    fin = open(in_fname, 'r')
-
-    decoy_prefix = blackboard.config['processing.db']['decoy prefix']
-    log_level = blackboard.config['logging']['level'].lower()
-
-    header = next(fin).strip().split('\t')
-    score_idx = header.index('score')
-    file_idx = header.index('file')
-    rrow_idx = header.index('rrow')
-    qrow_idx = header.index('qrow')
-    seq_idx = header.index('modseq')
-    title_idx = header.index('title')
-    desc_idx = header.index('desc')
-
-    prev_db = None
-    prev_title = None
-    cnt = 0
-
-    title_cnt = -1 # +1 happens before lines are added, so have to -1 start at 0 (-1+1)
-
-    max_scores = blackboard.config['rescoring'].getint('max scores')
-    use_extra = blackboard.config['rescoring.percolator'].getboolean('use extra')
-
-    prev_q = None
-    prev_db = None
-    payload = []
-
-    conn = None
-    cur = None
-
-    feats = None
-    scores = []
-
-    for il, l in enumerate(fin):
-        line = l.strip().split("\t")
-
-        if prev_q != line[qrow_idx] or (il == tot_lines-1):
-            if il == tot_lines-1:
-                payload.append(line)
-            if len(payload) > 0:
-                idxs = numpy.argsort([float(p[score_idx]) for p in payload])[::-1][:max_scores]
-                payload = [payload[idx] for idx in idxs]
-                if payload[0][file_idx] != prev_db:
-                    prev_db = payload[0][file_idx]
-                    if conn is not None:
-                        cur.close()
-                        conn.close()
-                    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, prev_db + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
-                    cur = conn.cursor()
-
-                cur.execute("SELECT rrow, data, extra FROM meta WHERE rrow in ({}) ORDER BY score DESC;".format(",".join([p[rrow_idx] for p in payload])))
-                metas = cur.fetchall()
-                parsed_metas = []
-
-                for i, (rrow, m, e) in enumerate(metas):
-                    #meta = eval(m)
-                    #meta = {k.strip()[1:-1] : float(v.strip()) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] in ALL_FEATS}
-                    # The below is notably faster than eval() (about 2x here)
-                    #parsed_metas.append({k.strip()[1:-1] : numpy.minimum(numpy.finfo(numpy.float32).max, float(v.strip())) for k, v in map(lambda x: x.strip().split(":"), m.strip()[1:-1].split(",")) if k.strip()[1:-1] not in FEATS_BLACKLIST})
-                    #parsed_metas.append({k: v for k, v in eval(m).items() if k not in FEATS_BLACKLIST})
-                    parsed_metas.append({k: v for k, v in msgpack.loads(m).items() if k not in FEATS_BLACKLIST})
-                    if use_extra:
-                        extras = msgpack.loads(e)
-                        parsed_metas[-1] = {**parsed_metas[-1], **extras}
-                    if feats is None:
-                        feats = sorted(list(parsed_metas[-1].keys()))
-                        if 'score' in feats:
-                            feats.append('deltLCn')
-                    if 'score' in feats: # XXX: HACK for comet-like deltLCn feature should depend on config...
-                        scores.append(parsed_metas[-1]['score'])
-
-                blackboard.lock()
-                pin = open(pin_name, 'a')
-
-                for j, m in enumerate(parsed_metas):
-                    if 'score' in feats:
-                        m['deltLCn'] = (m['score'] - numpy.min(scores)) / (m['score'] if m['score'] != 0 else 1)
-
-                    extraVals = "\t0.0\t0.0"
-                    if 'expMass' in m and 'calcMass' in m:
-                        extraVals = "\t{}\t{}".format(m['expMass'], m['calcMass'])
-
-                    pin.write("{}\t{}\t{}{}".format(payload[j][title_idx], (1 - payload[j][desc_idx].startswith(decoy_prefix)) * 2 - 1, start+title_cnt, extraVals))
-
-                    for k in feats:
-                        pin.write("\t{}".format(numpy.format_float_positional(m[k], trim='0', precision=12))) # percolator breaks if too many digits are provided
-                    pin.write("\t{}\t{}\n".format("-." + payload[j][seq_idx] + ".-", payload[j][desc_idx]))
-
-                pin.close()
-                blackboard.unlock()
-
-            prev_q = line[header.index('qrow')]
-            payload = []
-            scores = []
-            title_cnt += 1
-
-            if title_cnt >= end:
-                break
-
-        if title_cnt >= start:
-            payload.append(line)
-
-    fin.close()
 
 def count_lines(f):
     ff = open(f, 'r')
@@ -205,21 +92,24 @@ def rescore(cfg_file):
     first = msgpack.loads(res['data'])
     if use_extra:
         second = msgpack.loads(res['extra'])
-        first = {**first, **second}
+        if second is not None:
+            first = {**first, **second}
     feats = sorted(list(first.keys()))
     if 'score' in feats:
         feats.append('deltLCn')
-    feats = [x for x in feats if x not in FEATS_BLACKLIST]
+    feats = [x for x in feats if x not in blackboard.FEATS_BLACKLIST]
 
     fpin = open(pin_name, 'w')
-    fpin.write("PSMId\tLabel\tScanNr\texpMass\tcalcMass\t{}\tPeptide\tProteins\n".format("\t".join(feats)))
+    pin_template = blackboard.pin_template()
+    pin_template[pin_template.index("FEATURES")] = "\t".join(feats)
+    fpin.write("\t".join(pin_template) + "\n")
     fpin.close()
 
     cur.close()
     conn.close()
 
     log_level = blackboard.config['logging']['level'].lower()
-    if blackboard.config['rescoring.percolator'].getboolean('generate pin'):
+    if blackboard.config['misc.tsv_to_pin'].getboolean('enabled'):
         nworkers = blackboard.config['rescoring.percolator'].getint('pin workers')
         batch_size = blackboard.config['rescoring.percolator'].getint('pin batch size')
         n_total = queries.count_queries()

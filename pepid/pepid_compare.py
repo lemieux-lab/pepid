@@ -15,8 +15,6 @@ f2 = pickle.load(open(sys.argv[3], 'rb'))
 import numpy
 f1['curve'] = numpy.asarray(f1['curve'])
 f2['curve'] = numpy.asarray(f2['curve'])
-f1['curve'] = f1['curve']
-f2['curve'] = f2['curve']
 fig, axs, leg1 = gen_fdr_report.plot_report(f1, fdr_limit, index=0)
 fig, axs, leg2 = gen_fdr_report.plot_report(f2, fdr_limit, index=1, fig_axs=(fig, axs))
 fig.legend(handles=leg1+leg2, loc='lower center', ncols=6, bbox_to_anchor=(0.5, -0.025))
