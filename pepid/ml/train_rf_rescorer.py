@@ -4,6 +4,8 @@ import math
 import pickle
 import msgpack
 import tqdm
+import os
+import sqlite3
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -38,8 +40,11 @@ def run():
 
     data = []
 
-    import sqlite3
-    conn = sqlite3.connect("/scratch/zumerj/tmp/pepidrun_massive/human_q.sqlite", detect_types=1)
+    in_fname = blackboard.config['data']['output']
+    fname, fext = in_fname.rsplit('.', 1)
+    pin_fname = fname + suffix + "_pin.tsv"
+
+    conn = sqlite3.connect(os.path.join(blackboard.DB_PATH, "_q.sqlite"), detect_types=1)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
@@ -65,12 +70,12 @@ def run():
 
     bs = 100000
     meta = {}
-    for i in tqdm.tqdm(range(0, len(data), bs), desc='collecting metadata', total = numpy.ceil(len(data) / bs)):
+    for i in tqdm.tqdm(range(0, len(data), bs), desc='collecting metadata', total = numpy.ceil(len(data) / bs), tqdm_silence=(log_level in ['warning', 'error', 'fatal'])):
         cur.execute("SELECT title, meta FROM queries WHERE title IN ({});".format(",".join(["\"{}\"".format(t) for t in data['title'][i:i+bs]])))
         things = cur.fetchall()
         meta = meta | {m['title'] : msgpack.loads(m['meta'])['mgf:SEQ'] for m in things}
 
-    for di in tqdm.tqdm(range(len(data)), desc='adding gt info', total = len(data)):
+    for di in tqdm.tqdm(range(len(data)), desc='adding gt info', total = len(data), tqdm_silence=(log_level in ['warning', 'error', 'fatal'])):
         seq = meta[data[di]['title']]
         data[di]['gt'] = ((seq.replace("M(ox)", "M[15.994915]").replace("C", "C[57.0215]") == data[di]['seq']) - 0.5)*2
 
@@ -83,11 +88,7 @@ def run():
     names = every.dtype.names
     feats = header.split("\t")
     feats_template = blackboard.pin_template()
-    for f in feats_template:
-        try:
-            del feats[feats.index(f)]
-        except:
-            continue
+    feats = [x for x in feats if x not in feats_template]
     feat_idxs = [names.index(feat) for feat in feats]
 
     import sklearn
@@ -101,22 +102,29 @@ def run():
     best_feat = 's'
     best_score = 0
 
-    for feat in feats + ['s']:
-        for direction in [False, True]:
-            every.sort(order=[feat, 'target'])
-            if direction:
-                every = every[::-1]
+    feat_ipt = blackboard.config['rescoring.finetune_rf']['score']
+    feat_dir = blackboard.config['rescoring.finetune_rf'].getboolean('descending')
 
-            fdrs = numpy.asarray(pepid_utils.calc_qval(every[feat], every['target'] > 0))
-            aw = numpy.argwhere(fdrs <= 0.01)
-            min_s = every[feat][(aw.reshape((-1,))[-1])+1] if len(aw) > 0 else (every[feat].max()+1) if direction else (every[feat].min()-1)
+    if feat_ipt is None:
+        for feat in feats + ['s']:
+            for direction in [False, True]:
+                every.sort(order=[feat, 'target'])
+                if direction:
+                    every = every[::-1]
 
-            score = (every[feat] > min_s).sum() if direction else (every[feat] < min_s).sum()
-            if score > best_score:
-                best_dir = direction
-                best_feat = feat
+                fdrs = numpy.asarray(pepid_utils.calc_qval(every[feat], every['target'] > 0))
+                aw = numpy.argwhere(fdrs <= 0.01)
+                min_s = every[feat][(aw.reshape((-1,))[-1])+1] if len(aw) > 0 else (every[feat].max()+1) if direction else (every[feat].min()-1)
 
-            blackboard.LOG.debug("[{}|{}] Identified past 1% FDR:".format(feat, "+" if direction else "-"), score)
+                score = (every[feat] > min_s).sum() if direction else (every[feat] < min_s).sum()
+                if score > best_score:
+                    best_dir = direction
+                    best_feat = feat
+
+                blackboard.LOG.debug("[{}|{}] Identified past 1% FDR: {}".format(feat, "+" if direction else "-", score))
+    else:
+        best_feat = feat_ipt
+        best_dir = feat_dir
 
     feat = best_feat
     direction = best_dir
@@ -151,9 +159,9 @@ def run():
     min_sgt = data[feat][aw.reshape((-1,))[-1]+1] if len(aw) > 0 else data[feat].max()+1
 
     blackboard.LOG.info("Total: {}".format(len(every)))
-    blackboard.LOG.info("[{}] Identified past 1% FDR:".format(feat), (every[feat] > min_s).sum())
-    blackboard.LOG.info("Top-1: [{}] Identified past 1% FDR:".format(feat), (data[feat] > min_st).sum())
-    blackboard.LOG.info("Top-1: [{}] Identified past 1% FDP:".format(feat), (data[feat] > min_sgt).sum())
+    blackboard.LOG.info("[{}] Identified past 1% FDR: {}".format(feat, (every[feat] > min_s).sum()))
+    blackboard.LOG.info("Top-1: [{}] Identified past 1% FDR: {}".format(feat, (data[feat] > min_st).sum()))
+    blackboard.LOG.info("Top-1: [{}] Identified past 1% FDP: {}".format(feat, (data[feat] > min_sgt).sum()))
 
     fdrs = numpy.asarray(pepid_utils.calc_qval(every[feat], every['target'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
@@ -220,14 +228,14 @@ def run():
     fdrs = numpy.asarray(pepid_utils.calc_qval(data['s'], data['target'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
     min_st = data['s'][min(len(data)-1, aw.reshape((-1,))[-1]+1)] if len(aw) > 0 else data['s'].max()+1
-    blackboard.LOG.debug("FDRS/target:", fdrs[0], fdrs[-1])
+    blackboard.LOG.debug("FDRS/target: {} {}".format(fdrs[0], fdrs[-1]))
 
     fdrs = numpy.asarray(pepid_utils.calc_qval(data['s'], data['gt'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
     min_sgt = data['s'][min(len(data)-1, aw.reshape((-1,))[-1]+1)] if len(aw) > 0 else data['s'].max()+1
 
-    blackboard.LOG.info("Identified past 1% FDR:", (data['s'] > min_st).sum())
-    blackboard.LOG.info("Identified past 1% FDP:", (data['s'] > min_sgt).sum())
+    blackboard.LOG.info("Identified past 1% FDR: {}".format((data['s'] > min_st).sum()))
+    blackboard.LOG.info("Identified past 1% FDP: {}".format((data['s'] > min_sgt).sum()))
 
     pickle.dump(best_model, open(blackboard.here("ml/rescorer_rf.pkl"), "wb"))
     pickle.dump(scaler, open(blackboard.here("ml/rescorer_preproc.pkl"), "wb"))
