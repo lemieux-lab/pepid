@@ -19,19 +19,20 @@ exclude = [
     #"pepid/ml/spectrum_generator_ci.pkl",
     #"pepid/ml/spectrum_generator_out.pkl",
     "pepid/ml/*.pkl",
+    "pepid/ml_old/*",
 
     "pepid/old_search.py",
-    "pepid/gen_fdp*",
 ]
 include = [
     "pepid/*.py",
+    "pepid/example_*.cfg",
 
     "pepid/data/default.cfg",
     "pepid/ml/*",
 ]
 
 [project]
-version = "1.0.0-2"
+version = "1.1.0"
 name = "pepid"
 authors = [
     { name="Jeremie Zumer", email="jeremie.zumer@umontreal.ca" },

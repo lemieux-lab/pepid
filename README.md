@@ -2,7 +2,7 @@
 
 ## Quickstart
 
-An example config is provided in data/default.cfg: it should be copied somewhere and modified to suit user preferences (keys not filled in the user file are taken from the default config).
+An example config is provided in data/default.cfg: it should be copied somewhere and modified to suit user preferences (keys not filled in the user file are taken from the default config). Example templates suited for ProteomeTools and the One Hour Yeast Proteome are provided in the main distribution (`example_{proteometools,yeast}.cfg`). An example pipeline using all the custom deep learning primitives in Pepid is also provided for evaluation (`example_proteometools_ml.cfg`).
 
 ```
 python main.py <config.cfg>
@@ -21,7 +21,7 @@ Or as a module:
 python -mpepid <config.cfg>
 ```
 
-In addition to its default search capabilities, pepid provides two utility scripts: `pepid_files.py <config.cfg> filetype` will output the paths to files matching a certain pepid artifact type (`report` will give the path to all normal report artifacts). `pepid_compare.py <config.cfg> <analysis1.pkl> <analysis2.pkl>` will plot two analyses on the same graph for easier comparative analysis. It can be used to compare results before/after rescoring, or to compare between two scoring methods, etc.
+In addition to its default search capabilities, pepid provides some utility scripts: `pepid_files.py <config.cfg> filetype` will output the paths to files matching a certain pepid artifact type (`report` will give the path to all normal report artifacts). `pepid_compare.py <config.cfg> <analysis1.pkl> <analysis2.pkl>` will plot two analyses on the same graph for easier comparative analysis. It can be used to compare results before/after rescoring, or to compare between two scoring methods, etc. `pepid_mgf_meta.py <config.cfg> key` will insert the text of the key in the input MGF file into the query database's metadata field. This can be used for downstream analysis or external evaluation, such as adding the ground truth peptide in a dataset that has such data for FDP evaluation.
 
 IMPORTANT:
 
@@ -78,7 +78,7 @@ Pepid also outputs a graphical report that can be used to quickly ascertain the 
 ## State of the Art Features
 
 Experimental deep learning-based features are available for experimentation. Future releases will include better supported use of those features.
-Pepid includes a peptide length prediction module that can be enabled by adding extensions.predict\_length in preprocessing and extensions.postprocess\_for\_length in postprocessing.
+Pepid includes a peptide length prediction module that can be enabled by adding extensions.predict\_length in preprocessing and extensions.postprocess\_for\_length in postprocessing, a rescoring algorithm based on a pretrained ground truth separation paradigm trained on Massive-KB along with a finetuning phase for experimental condition correction, and a whole-spectrum prediction algorithm similar to PredFull.
 
 ## Citing
 
