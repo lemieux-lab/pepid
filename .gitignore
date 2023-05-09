@@ -7,3 +7,4 @@ massive.cfg
 .*
 *egg-info*
 dist/*
+*.pyc
