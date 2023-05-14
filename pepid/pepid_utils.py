@@ -176,14 +176,12 @@ def tsv_to_pin(header, lines, start=0):
     lines = newlines
 
     extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
-    if extra_fn != 'None':
+    if extra_fn is not None:
         extra_fn = import_or(extra_fn, None)
-    else:
-        extra_fn = None
 
     user_extra = None
     if extra_fn is not None:
-        user_extra = extra_fn(lines)
+        user_extra = extra_fn(header, lines)
 
     for il, qlines in enumerate(lines):
         if len(qlines) == 0:
@@ -205,7 +203,7 @@ def tsv_to_pin(header, lines, start=0):
                 extras = msgpack.loads(e)
                 parsed_metas[-1] = {**parsed_metas[-1], **extras}
             if user_extra is not None:
-                parsed_metas[-1] = {**parsed_metas[-1], **user_extra[i]}
+                parsed_metas[-1] = {**parsed_metas[-1], **user_extra[il][i]}
             if feats is None:
                 feats = sorted(list(parsed_metas[-1].keys()))
                 if 'score' in feats:

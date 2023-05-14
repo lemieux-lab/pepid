@@ -75,6 +75,54 @@ def pred_rt(cands):
 
     return [0.0] * len(cands)
 
+def post_ml_spectrum(cands):
+    if __package__ is None or __package__ == '':
+        from ml import spectrum_generator_sparse as spectrum_generator
+    else:
+        from .ml import spectrum_generator_sparse as spectrum_generator
+    import torch
+
+    global MODEL
+    try:
+        MODEL
+    except:
+        MODEL = None
+
+    if MODEL is None:
+        MODEL = spectrum_generator.Model().cuda()
+        MODEL.load_state_dict(torch.load(blackboard.here("ml/spectrum_generator_sparse.pkl"), map_location='cuda:0'))
+
+    cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
+    nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
+    max_charge = blackboard.config['processing.db'].getint('max charge')
+
+    out = []
+    for j in range(1, max_charge+1):
+        embs = []
+        for i in range(len(cands)):
+            embs.append(spectrum_generator.embed({"pep": cands[i]['seq'],
+                                                "mods": cands[i]['mods'],
+                                                "charge": j,
+                                                "mass": pepid_utils.neutral_mass(cands[i]['seq'], cands[i]['mods'], nterm, cterm, j)}))
+        embs = torch.FloatTensor(numpy.asarray(embs)).cuda()
+        with torch.no_grad():
+            out.append(MODEL(embs).view(len(cands), -1))
+            out[-1] = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
+    out = numpy.stack(out, axis=1)
+
+    ret = []
+    for o in range(out.shape[0]):
+        small_spec = []
+        for z in range(out.shape[1]):
+            nonzero = numpy.nonzero(out[o,z])[0]
+            nonzero_intens = out[o,z][nonzero]
+            base = list(zip(nonzero[:2000] / 10, nonzero_intens[:2000]))
+            padded = numpy.pad(base, ((0, 2000 - len(nonzero)), (0, 0)))
+            small_spec.append(padded)
+        cands[o]['metadata'] = msgpack.dumps({'MLSpec': numpy.stack(small_spec, axis=0)})
+        ret.append(cands[o])
+    return ret
+
 def ml_spectrum(cands):
     """
     Spectrum prediction based on deep learning model

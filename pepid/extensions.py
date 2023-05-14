@@ -1,6 +1,7 @@
 import numpy
 import time
 import msgpack
+import sys
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -8,6 +9,49 @@ else:
     from . import blackboard
 
 # This is an example user script containing user functions that may be specified in the config
+
+def specgen_features(header, lines):
+    batch_size = blackboard.config['pin.specgen_features'].getint('batch size')
+
+    cand_file = blackboard.DB_PATH + "_cands.sqlite"
+    qfile = blackboard.DB_PATH + "_q.sqlite"
+
+    conn = sqlite3.connect(cand_file, detect_types=1)
+    connq = sqlite3.connect(qfile, detect_types=1)
+    cur = conn.cursor()
+    curq = connq.cursor()
+
+    ret = []
+
+    for i in range(0, len(lines), batch_size):
+        cands = [l[header.index('candrow')] for ll in lines[i:i+batch_size] for l in ll]
+        quers = [l[header.index('qrow')] for ll in lines[i:i+batch_size] for l in ll]
+        cur.execute("SELECT rowid, meta FROM candidates WHERE rowid IN ({}) ORDER BY rowid;".format(",".join(cands)))
+        curq.execute("SELECT rowid, spec FROM candidates WHERE rowid in ({}) ORDER BY rowid;".format(",".join(quers)))
+        extras = {r['rowid'] : msgpack.loads(r['meta'])['MLSpec'] for r in cur.fetchall()}
+        specs = {r['rowid'] : pickle.loads(r['spec']) for r in curq.fetchall()}
+
+        for query_lines in lines[i:i+batch_size]:
+            ret.append([])
+            charge = line[header.index('query_charge')]-1
+            spec = specs[line[int(header.index('qrow'))]]
+            blit = numpy.zeros((5000*10,), dtype='float32') # XXX
+            for mz, intens in spec:
+                if int(numpy.round(mz * 10)) >= 5000*10 - 0.5:
+                    break
+                blit[int(numpy.round(mz * 10))] += intens
+            blit = blit / (blit.max() + 1e-10)
+            blit_norm = numpy.linalg.norm(blit)
+            for line in query_lines:
+                mlspec = extras[line[int(header.index('candrow'))]][charge]
+                corr = 0
+                for mz, intens in mlspec:
+                    if int(numpy.round(mz * 10)) >= 5000*10 - 0.5:
+                        break
+                    corr += blit[int(numpy.round(mz*10))] * intens
+                corr /= (blit_norm * numpy.sqrt(sum([x[0]**2 for x in mlspec])) + 1e-10)
+                ret[-1].append({'MLCorr': corr})
+    return ret
 
 model = None
 def predict_length(queries):
