@@ -21,11 +21,6 @@ class PINNode(node.Node):
         self.messages[0x01] = ["!QQc", self.do]
 
     def do(self, start, end, _):
-        if __package__ is None or __package__ == '':
-            import pepid_percolator
-        else:
-            from . import pepid_percolator
-
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
@@ -76,7 +71,7 @@ class PINNode(node.Node):
         blackboard.TMP_PATH = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
         self.path = blackboard.TMP_PATH
         blackboard.setup_constants()
-        blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
+        blackboard.LOCK = blackboard.acquire_lock()
         blackboard.prepare_connection()
 
 if __name__ == '__main__':

@@ -70,11 +70,11 @@ def insert_mgf_field(cfg, key):
 
         for query in queries:
             query = dict(query)
-            extra = query['meta'].data
+            extra = msgpack.loads(query['meta'])
             if extra is None:
                 extra = {}
             extra['mgf:' + key] = mgf[query['title']]
-            ret.append({'rowid': query['rowid'], 'data': blackboard.Meta(extra)})
+            ret.append({'rowid': query['rowid'], 'data': msgpack.dumps(extra)})
 
         update_cur.executemany("UPDATE queries SET meta=:data WHERE rowid=:rowid;", ret)
         conn.commit()

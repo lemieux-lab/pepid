@@ -8,6 +8,7 @@ import os
 import random
 import copy
 import msgpack
+import pickle
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -75,117 +76,90 @@ def pred_rt(cands):
 
     return [0.0] * len(cands)
 
-def post_ml_spectrum(cands):
-    if __package__ is None or __package__ == '':
-        from ml import spectrum_generator_sparse as spectrum_generator
-    else:
-        from .ml import spectrum_generator_sparse as spectrum_generator
-    import torch
+MODEL = None
+class post_ml_spectrum(object):
+    required_fields = {'candidates': ['seq', 'mods', 'meta']}
 
-    global MODEL
-    try:
-        MODEL
-    except:
-        MODEL = None
+    def __new__(cls, cands):
+        if __package__ is None or __package__ == '':
+            from ml import specgen
+        else:
+            from .ml import specgen
+        import torch
 
-    if MODEL is None:
-        MODEL = spectrum_generator.Model().cuda()
-        MODEL.load_state_dict(torch.load(blackboard.here("ml/spectrum_generator_sparse.pkl"), map_location='cuda:0'))
+        batch_size = blackboard.config['processing.db.post_ml_spectrum'].getint('batch size')
+        device = blackboard.config['processing.db.post_ml_spectrum']['device']
+        if device is None:
+            device = 'cpu'
 
-    cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
-    nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
-    max_charge = blackboard.config['processing.db'].getint('max charge')
+        if 'cuda' in device:
+            blackboard.lock()
+            gpu_lock = blackboard.acquire_lock(device)
 
-    out = []
-    for j in range(1, max_charge+1):
+            blackboard.lock(gpu_lock)
+
+            blackboard.unlock()
+
+        global MODEL
+
+        if MODEL is None:
+            MODEL = specgen.Model().to(device)
+            MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen.pkl"), map_location=device))
+
+        cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
+        nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
+        #max_charge = blackboard.config['processing.db'].getint('max charge')
+
+        out = []
         embs = []
         for i in range(len(cands)):
-            embs.append(spectrum_generator.embed({"pep": cands[i]['seq'],
-                                                "mods": cands[i]['mods'],
-                                                "charge": j,
-                                                "mass": pepid_utils.neutral_mass(cands[i]['seq'], cands[i]['mods'], nterm, cterm, j)}))
-        embs = torch.FloatTensor(numpy.asarray(embs)).cuda()
+            embs.append(specgen.make_input(cands[i]['seq'], cands[i]['mods']))
+        embs = torch.FloatTensor(numpy.asarray(embs))
         with torch.no_grad():
-            out.append(MODEL(embs).view(len(cands), -1))
-            out[-1] = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
-    out = numpy.stack(out, axis=1)
+            for bidx in range(0, len(embs), batch_size):
+                out.append(MODEL(embs[bidx:bidx+batch_size].to(device)))
+                sparsy = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
+                out[-1] = numpy.stack([pepid_utils.dense_to_sparse(sparsy[s]) for s in range(len(sparsy))], axis=0)
+        out = numpy.concatenate(out, axis=0)
 
-    ret = []
-    for o in range(out.shape[0]):
-        small_spec = []
-        for z in range(out.shape[1]):
-            nonzero = numpy.nonzero(out[o,z])[0]
-            nonzero_intens = out[o,z][nonzero]
-            base = list(zip(nonzero[:2000] / 10, nonzero_intens[:2000]))
-            padded = numpy.pad(base, ((0, 2000 - len(nonzero)), (0, 0)))
-            small_spec.append(padded)
-        cands[o]['metadata'] = msgpack.dumps({'MLSpec': numpy.stack(small_spec, axis=0)})
-        ret.append(cands[o])
-    return ret
+        if 'cuda' in device:
+            import gc
+            del MODEL
+            MODEL = None
+            gc.collect()
+            torch.cuda.empty_cache()
+            blackboard.unlock(gpu_lock)
 
-def ml_spectrum(cands):
-    """
-    Spectrum prediction based on deep learning model
-    """
+        ret = []
+        for o in range(out.shape[0]):
+            cands[o]['meta'] = msgpack.dumps({'MLSpec': out[o].tolist()})
+            ret.append(cands[o])
+        return ret
 
-    if __package__ is None or __package__ == '':
-        import spectrum_generator_sparse as spectrum_generator
-    else:
-        from . import spectrum_generator_sparse as spectrum_generator
-    import torch
+class theoretical_spectrum(object):
+    required_fields = {'candidates': ['seq', 'mods']}
 
-    global MODEL
-    try:
-        MODEL
-    except:
-        MODEL = None
+    def __new__(cls, cands):
+        """
+        Spectrum prediction function generating b- and y-series ions
+        with charged variants
+        """
 
-    if MODEL is None:
-        MODEL = spectrum_generator.Model().cuda()
-        MODEL.load_state_dict(torch.load("ml/spectrum_generator_sparse.pkl", map_location='cuda:0'))
+        cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
+        nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
+        max_charge = blackboard.config['processing.db'].getint('max charge')
+        exclude_end = blackboard.config['processing.db.theoretical_spectrum'].getboolean('exclude last aa')
+        weights = eval(blackboard.config['processing.db.theoretical_spectrum']['weights'])
 
-    cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
-    nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
-    max_charge = blackboard.config['processing.db'].getint('max charge')
+        ret = []
 
-    out = []
-    for j in range(1, max_charge+1):
-        embs = []
-        for i in range(len(cands)):
-            embs.append(spectrum_generator.embed({"pep": cands[i]['seq'],
-                                                "mods": cands[i]['mods'],
-                                                "charge": j,
-                                                "mass": pepid_utils.neutral_mass(cands[i]['seq'], cands[i]['mods'], nterm, cterm, j)}))
-        embs = torch.FloatTensor(numpy.asarray(embs)).cuda()
-        out.append(MODEL(embs).view(len(cands), -1))
-        out[-1] = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
-    out = numpy.stack(out, axis=1)
+        for cand in cands:
+            seq = cand['seq']
+            mod = cand['mods']
+            masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge, exclude_end=exclude_end, weights=weights)
+            ret.append(masses)
 
-    import scipy
-    import scipy.sparse
-    return [scipy.sparse.csr_matrix(x) for x in out]
-
-def theoretical_spectrum(cands):
-    """
-    Spectrum prediction function generating b- and y-series ions
-    with charged variants
-    """
-
-    cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
-    nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
-    max_charge = blackboard.config['processing.db'].getint('max charge')
-    exclude_end = blackboard.config['processing.db.theoretical_spectrum'].getboolean('exclude last aa')
-    weights = eval(blackboard.config['processing.db.theoretical_spectrum']['weights'])
-
-    ret = []
-
-    for cand in cands:
-        seq = cand['seq']
-        mod = cand['mods']
-        masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge, exclude_end=exclude_end, weights=weights)
-        ret.append(masses)
-
-    return ret
+        return ret
 
 def stub(x):
     return x
@@ -197,6 +171,8 @@ def user_processing(start, end):
     entry in the temporary database.
     """
 
+    import msgpack
+
     cur = blackboard.CONN.cursor()
     max_charge = blackboard.config['processing.db'].getint('max charge')
 
@@ -204,25 +180,29 @@ def user_processing(start, end):
     spec_fn = pepid_utils.import_or(blackboard.config['processing.db']['spectrum function'], theoretical_spectrum)
     user_fn = pepid_utils.import_or(blackboard.config['processing.db']['postprocessing function'], stub)
 
-    blackboard.execute(cur, blackboard.select_str("candidates", blackboard.DB_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+    rows = set()
+    rows.add('rowid')
+    rows.update(getattr(user_fn, 'required_fields', {}).get('candidates', []))
+    rows.update(getattr(rt_fn, 'required_fields', {}).get('candidates', []))
+    rows.update(getattr(spec_fn, 'required_fields', {}).get('candidates', []))
+
+    blackboard.execute(cur, "SELECT {} FROM candidates WHERE rowid BETWEEN ? AND ?;".format(",".join(rows)), (start+1, end))
     data = cur.fetchall()
     data = list(map(dict, data))
 
     rts = rt_fn(data)
     specs = spec_fn(data)
 
-    specs = [blackboard.Spectrum(spec) for spec in specs]
+    specs = [pickle.dumps(spec) for spec in specs]
     
     for i in range(len(data)):
         data[i]['spec'] = specs[i]
         data[i]['rt'] = rts[i]
     ret = user_fn(data)
     #rowids = list(range(start+1, end+1))
-    for r in ret:
-        r['mods'] = msgpack.dumps(r['mods'])
 
-    #blackboard.executemany(cur, "UPDATE candidates SET rt = ?, spec = ? WHERE rowid = ?;", list(zip(rts, specs, rowids)))
-    blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)
+    blackboard.executemany(cur, "UPDATE candidates SET {} WHERE rowid = :rowid;".format(",".join(["{} = :{}".format(k, k) for k in ret[0].keys()])), ret)
+    #blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)
     blackboard.commit()
 
 def process_entry(description, buff, settings):
@@ -305,7 +285,7 @@ def process_entry_core(description, buff, settings, seq_type):
             for var in var_set:
                 mass = pepid_utils.theoretical_mass(peps[j], var, settings.nterm, settings.cterm)
                 if settings.min_mass <= mass <= settings.max_mass:
-                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": msgpack.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": blackboard.Spectrum(None), 'meta': blackboard.Meta(None)})
+                    data.append({"desc": description.split(" ", 1)[0], "decoy": seq_type == "decoy", "seq": peps[j], "mods": msgpack.dumps(var), "rt": 0.0, "length": len(peps[j]), "mass": mass, "spec": pickle.dumps(None), 'meta': msgpack.dumps(None)})
     return data
 
 def fill_db(start, end, seq_type):

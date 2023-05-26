@@ -25,6 +25,19 @@ def run(cfg):
 
     log_level = blackboard.config['logging']['level'].lower()
     if blackboard.config['misc.tsv_to_pin'].getboolean('enabled'):
+        in_fname = blackboard.config['data']['output']
+        fname, fext = in_fname.rsplit('.', 1)
+        suffix = blackboard.config['rescoring']['suffix']
+        pin_name = fname + suffix + "_pin.tsv"
+ 
+        inf = open(in_fname, 'r')
+        header = next(inf).strip().split("\t")
+        line = next(inf).strip().split('\t')
+        inf.close()
+        pinf = open(pin_name, 'w')
+        pinf.write("\t".join(pepid_utils.generate_pin_header(header, line)) + "\n")
+        pinf.close()
+
         nworkers = blackboard.config['rescoring.finetune_rf'].getint('pin workers')
         batch_size = blackboard.config['rescoring.finetune_rf'].getint('pin batch size')
         n_total = queries.count_queries()
@@ -50,7 +63,6 @@ def run(cfg):
     f = open(pin_fname, 'r')
     header = next(f).strip().split("\t")
     feats = header
-    del feats[feats.index('LgtRelScore')] # XXX HACK for now, delete when model gets retrained on Massive
 
     f.close()
 

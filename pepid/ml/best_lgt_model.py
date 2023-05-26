@@ -30,8 +30,6 @@ GT_MAX_LGT = 40
 PROT_BLIT_LEN = (int)(5000 / SIZE_RESOLUTION_FACTOR)
 PROT_TGT_LEN = (int)(2000 / SIZE_RESOLUTION_FACTOR)
 
-torch.backends.cudnn.enabled = True
-
 numpy.random.seed(0)
 
 class Model(nn.Module):

@@ -106,6 +106,7 @@ def run(cfg):
         import os
         os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['tmpdir'], "pepid_socket*")))
         os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['workdir'], ".lock")))
+        os.system("rm -rf {}".format(os.path.join(blackboard.config['data']['workdir'], ".lock_*"))) # Locks possibly created for e.g. devices
 
         sys.exit(ret)
 

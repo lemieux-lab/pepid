@@ -24,6 +24,7 @@ if __name__ == '__main__':
         outf.write(header)
         f.close()
 
+        import sys
         for data in rescore_fn(sys.argv[1]):
             outf.write("\t".join(list(map(str, data))) + "\n")
 

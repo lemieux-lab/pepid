@@ -4,6 +4,8 @@ import random
 import time
 import random
 import os
+import pickle
+import msgpack
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -75,10 +77,10 @@ def fill_queries(start, end):
                 data[-1]['rt'] = rt
                 data[-1]['charge'] = charge
                 data[-1]['mass'] = precmass
-                data[-1]['spec'] = blackboard.Spectrum(list(zip(mz_arr, intens_arr)))
+                data[-1]['spec'] = pickle.dumps(list(zip(mz_arr, intens_arr)))
                 data[-1]['min_mass'] = precmass + delta_l
                 data[-1]['max_mass'] = precmass + delta_r
-                data[-1]['meta'] = blackboard.Meta(None)
+                data[-1]['meta'] = msgpack.dumps(None)
         elif '0' <= l[0] <= '9':
             mz, intens = l.split(maxsplit=1)
             mz_arr.append(float(mz))
@@ -109,11 +111,17 @@ def user_processing(start, end):
         return
 
     cur = blackboard.CONN.cursor()
-    blackboard.execute(cur, blackboard.select_str("queries", blackboard.QUERY_COLS + ["rowid"], "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+
+    rows = set()
+    rows.add('rowid')
+    rows.update(getattr(metadata_fn, 'required_fields', {}).get('queries', []))
+
+    blackboard.execute(cur, "SELECT {} FROM queries WHERE rowid BETWEEN ? AND ?;".format(",".join(rows)), (start+1, end))
+
     data = cur.fetchall()
     meta = metadata_fn(data)
     if meta is not None:
-        blackboard.executemany(cur, "UPDATE queries SET meta = ? WHERE rowid = ?;", zip(map(blackboard.Meta, meta), map(lambda x: x['rowid'], data)))
+        blackboard.executemany(cur, "UPDATE queries SET meta = ? WHERE rowid = ?;", zip(map(msgpack.dumps, meta), map(lambda x: x['rowid'], data)))
     cur.close()
 
 def prepare_db():

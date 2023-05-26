@@ -5,6 +5,7 @@ import numba
 import numba.typed
 import sys
 import msgpack
+import pickle
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -13,129 +14,112 @@ else:
     from . import blackboard
     from . import pepid_utils
 
-def cosine(cands, q):
-    """
-    Simple cosine distance between two spectra.
-    Requires both spectra to be simple (mz, intensity) lists.
-    """
+class hyperscore(object):
+    required_fields = {'candidates': ['spec', 'mass', 'seq', 'mods', 'desc'], 'queries': ['title', 'spec', 'mass', 'charge']}
 
-    blit_q = numpy.zeros((len(cands), 20000)) 
+    def __new__(cls, qcands, qs):
+        """
+        Sample scoring function: rnhs from identipy (with norm type = sum) or hyperscore from x!tandem (with norm type = max).
+        Score output is a dictionary. If the score function will be rescored by percolator,
+        the dictionary keys corresponding to the percolator parameters will be used for that purpose.
+        """
 
-    for i in range(len(cands)):
-        for mz, intens in q[i]['spec'].data:
-            if mz >= 2000-0.5 or mz == 0:
-                break
-            blit_q[i, round(mz * 10)] = intens
+        ret = []
 
-    blit_cand = numpy.vstack([numpy.asarray(cands[i]['spec'].data[q[i]['charge']-1].todense()) for i in range(len(cands))])
-    score = ((blit_q * blit_cand) / numpy.maximum(1e-5, (numpy.linalg.norm(blit_q, axis=-1, keepdims=True) * numpy.linalg.norm(blit_cand, axis=-1, keepdims=True)))).sum(axis=-1).reshape((-1,))
+        norm_type = blackboard.config['scoring.hyperscore']['norm type']
+        ignore_weights = blackboard.config['scoring.hyperscore'].getboolean('ignore weights')
 
-    ret = [{'score': score[i], 'theoretical': q[i]['spec'].data, 'spec': cands[i]['spec'].data[q[i]['charge']-1], 'sumI': 0, 'dist': None, 'total_matched': 0, 'title': q[i]['title'], 'desc': cands[i]['desc'], 'seq': cands[i]['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s,m in zip(cands[i]['seq'], cands[i]['mods'])])} for i in range(len(cands))]
-    return ret
+        acc_ppm = blackboard.config['scoring.hyperscore']['peak matching unit'] == 'ppm'
+        acc = blackboard.config['scoring.hyperscore'].getfloat('peak matching tolerance')
 
-def hyperscore(qcands, qs):
-    """
-    Sample scoring function: rnhs from identipy (with norm type = sum) or hyperscore from x!tandem (with norm type = max).
-    Score output is a dictionary. If the score function will be rescored by percolator,
-    the dictionary keys corresponding to the percolator parameters will be used for that purpose.
-    """
+        cutoff = blackboard.config['scoring.hyperscore'].getfloat('cutoff')
 
-    ret = []
+        match_mult = blackboard.config['scoring.hyperscore'].getfloat('match multiplier')
+        disjoint = blackboard.config['scoring.hyperscore'].getboolean('disjoint model')
+        max_best = blackboard.config['scoring.hyperscore'].getint('max best')
+        if max_best <= 0:
+            blackboard.LOG.fatal("Hyperscore: max best must be >= 0, got '{}'".format(max_best))
+            sys.exit(-1)
+        criterion = blackboard.config['scoring.hyperscore']['criterion best']
+        type_best = blackboard.config['scoring.hyperscore']['type best']
+        type_charge = type_best == 'charge'
+        type_series = type_best == 'series'
+        type_both = type_best == 'both'
+        if (type_charge + type_series + type_both) != 1:
+            blackboard.LOG.fatal("Hyperscore: type best must be exactly one of charge, series or both, got '{}'".format(type_best))
+            sys.exit(-1)
+        series_count = blackboard.config['scoring.hyperscore'].getint('series count')
+        match_all = not blackboard.config['scoring.hyperscore'].getboolean('match only closest peak')
 
-    norm_type = blackboard.config['scoring.hyperscore']['norm type']
-    ignore_weights = blackboard.config['scoring.hyperscore'].getboolean('ignore weights')
+        for q, cands in zip(qs, qcands):
+            ret.append([])
 
-    acc_ppm = blackboard.config['scoring.hyperscore']['peak matching unit'] == 'ppm'
-    acc = blackboard.config['scoring.hyperscore'].getfloat('peak matching tolerance')
+            spectrum = numpy.asarray(pickle.loads(q['spec']), dtype='float32')
+            mz_array = spectrum[:,0]
+            intens = spectrum[:,1]
+            norm = intens.sum() if norm_type == 'sum' else intens.max()
+            charge = q['charge']
+            qmass = q['mass']
 
-    cutoff = blackboard.config['scoring.hyperscore'].getfloat('cutoff')
+            for i in range(len(cands)):
+                c = cands[i]
 
-    match_mult = blackboard.config['scoring.hyperscore'].getfloat('match multiplier')
-    disjoint = blackboard.config['scoring.hyperscore'].getboolean('disjoint model')
-    max_best = blackboard.config['scoring.hyperscore'].getint('max best')
-    if max_best <= 0:
-        blackboard.LOG.fatal("Hyperscore: max best must be >= 0, got '{}'".format(max_best))
-        sys.exit(-1)
-    criterion = blackboard.config['scoring.hyperscore']['criterion best']
-    type_best = blackboard.config['scoring.hyperscore']['type best']
-    type_charge = type_best == 'charge'
-    type_series = type_best == 'series'
-    type_both = type_best == 'both'
-    if (type_charge + type_series + type_both) != 1:
-        blackboard.LOG.fatal("Hyperscore: type best must be exactly one of charge, series or both, got '{}'".format(type_best))
-        sys.exit(-1)
-    series_count = blackboard.config['scoring.hyperscore'].getint('series count')
-    match_all = not blackboard.config['scoring.hyperscore'].getboolean('match only closest peak')
+                theoretical = pickle.loads(c['spec'])
+                seqs = c['seq']
+                seq_mass = c['mass']
 
-    for q, cands in zip(qs, qcands):
-        ret.append([])
+                score = 0
+                total_matched = 0
+                sumI = 0
 
-        spectrum = numpy.asarray(q['spec'].data, dtype='float32')
-        mz_array = spectrum[:,0]
-        intens = spectrum[:,1]
-        norm = intens.sum() if norm_type == 'sum' else intens.max()
-        charge = q['charge']
-        qmass = q['mass']
+                theoretical = numpy.asarray(theoretical, dtype='float32')[:int((charge-1) * series_count)]
 
-        for i in range(len(cands)):
-            c = cands[i]
+                sumis, series_matches = hyperscore_score(spectrum, theoretical, norm, acc, acc_ppm, cutoff, match_mult, type_charge, type_series, type_both, series_count, ignore_weights, match_all)
+                sumI = float((sumis * norm).sum())
 
-            theoretical = c['spec'].data
-            seqs = c['seq']
-            seq_mass = c['mass']
+                # Select only the best N series/charges/match-lists
+                selection = numpy.argsort(series_matches if criterion == 'matches' else sumis)[-max_best:]
+                total_matched = series_matches.sum()
+                series_matches = series_matches[selection]
 
-            score = 0
-            total_matched = 0
-            sumI = 0
+                if series_matches.sum() == 0:
+                    ret[-1].append({'score': 0})
+                    continue
 
-            theoretical = numpy.asarray(theoretical, dtype='float32')[:int((charge-1) * series_count)]
+                mults = numpy.ones(selection.shape, dtype='float32')
+                import sys
+                float_lim = sys.float_info.max
+                for j, matches in enumerate(series_matches):
+                    if matches > 0:
+                        mults[j] = min(numpy.math.factorial(min(20, matches)), float_lim)
+                if not disjoint:
+                    s = sumis.sum()
+                    score = 1
+                    for m in mults:
+                        score *= s * m
+                else:
+                    score = sumis.sum()
+                    for m in mults:
+                        score *= m
+                score = float(min(score, float_lim))
 
-            sumis, series_matches = hyperscore_score(spectrum, theoretical, norm, acc, acc_ppm, cutoff, match_mult, type_charge, type_series, type_both, series_count, ignore_weights, match_all)
-            sumI = float((sumis * norm).sum())
+                logsumI = numpy.log10(sumI) # note: x!tandem uses a factor 4 to multiply this by default
 
-            # Select only the best N series/charges/match-lists
-            selection = numpy.argsort(series_matches if criterion == 'matches' else sumis)[-max_best:]
-            total_matched = series_matches.sum()
-            series_matches = series_matches[selection]
-
-            if series_matches.sum() == 0:
-                ret[-1].append({'score': 0})
-                continue
-
-            mults = numpy.ones(selection.shape, dtype='float32')
-            import sys
-            float_lim = sys.float_info.max
-            for j, matches in enumerate(series_matches):
-                if matches > 0:
-                    mults[j] = min(numpy.math.factorial(min(20, matches)), float_lim)
-            if not disjoint:
-                s = sumis.sum()
-                score = 1
-                for m in mults:
-                    score *= s * m
-            else:
-                score = sumis.sum()
-                for m in mults:
-                    score *= m
-            score = float(min(score, float_lim))
-
-            logsumI = numpy.log10(sumI) # note: x!tandem uses a factor 4 to multiply this by default
-
-            ret[-1].append({"dM": float((c['mass'] - q['mass']) / c['mass']),
-                        "absdM": float(abs((c['mass'] - q['mass']) / c['mass'])),
-                        "peplen": len(c['seq']),
-                        "ionFrac": float(total_matched / (theoretical.shape[0] * theoretical.shape[1])),
-                        #'relIntTotMatch': sumI / norm,
-                        'charge': int(q['charge']),
-                        'z2': int(q['charge'] == 2),
-                        'z3': int(q['charge'] == 3),
-                        'z4': int(q['charge'] == 4),
-                        'rawscore': float(score),
-                        #'xcorr': xcorr,
-                        'expMass': float(q['mass']),
-                        'calcMass': float(c['mass']),
-                'score': float(score), 'sumI': float(logsumI), 'total_matched': int(total_matched), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
-    return ret
+                ret[-1].append({"dM": float((c['mass'] - q['mass']) / c['mass']),
+                            "absdM": float(abs((c['mass'] - q['mass']) / c['mass'])),
+                            "peplen": len(c['seq']),
+                            "ionFrac": float(total_matched / (theoretical.shape[0] * theoretical.shape[1])),
+                            #'relIntTotMatch': sumI / norm,
+                            'charge': int(q['charge']),
+                            'z2': int(q['charge'] == 2),
+                            'z3': int(q['charge'] == 3),
+                            'z4': int(q['charge'] == 4),
+                            'rawscore': float(score),
+                            #'xcorr': xcorr,
+                            'expMass': float(q['mass']),
+                            'calcMass': float(c['mass']),
+                    'score': float(score), 'sumI': float(logsumI), 'total_matched': int(total_matched), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+        return ret
 
 @numba.njit(locals={'spectrum': numba.float32[:,::1], 'theoretical': numba.float32[:,:,::1], 'acc': numba.float32, 'delta': numba.float32, 'series_count': numba.int32, 'norm': numba.float32, 'spec_idx': numba.int32})
 def hyperscore_score(spectrum, theoretical, norm, acc=10, acc_ppm=True, cutoff=0.01, match_mult=100.0, type_charge=False, type_series=False, type_both=True, series_count=2, ignore_weights=False, match_all=False):
@@ -193,107 +177,110 @@ def hyperscore_score(spectrum, theoretical, norm, acc=10, acc_ppm=True, cutoff=0
 
     return sumis, series_matches
 
-def xcorr(qcands, qs):
-    """
-    Sample scoring function: Xcorr
-    """
+class xcorr(object):
+    required_fields = {'candidates': ['spec', 'mass', 'seq', 'mods', 'desc'], 'queries': ['title', 'spec', 'mass', 'charge']}
 
-    bin_ppm = blackboard.config['scoring.xcorr']['bin matching unit'] == 'ppm'
-    ppm_mode = blackboard.config['scoring.xcorr']['ppm mode']
-    window_size = blackboard.config['scoring.xcorr'].getint('correlation window size')
-    norm_windows = blackboard.config['scoring.xcorr'].getint('norm window count')
-    bin_resolution_setting = blackboard.config['scoring.xcorr'].getfloat('bin resolution')
-    max_mass = blackboard.config['processing.query'].getfloat('max mass')
-    min_resolution = max(0, blackboard.config['scoring.xcorr'].getfloat('min bin width'))
-    series_count = blackboard.config['scoring.xcorr'].getint('series count')
-    ignore_weights = blackboard.config['scoring.xcorr'].getboolean('ignore weights')
+    def __new__(cls, qcands, qs):
+        """
+        Sample scoring function: Xcorr
+        """
 
-    if bin_ppm and ppm_mode == 'bins':
-        if min_resolution == 0:
-            blackboard.LOG.fatal("Xcorr in ppm bins mode must have a non-zero min bin width, got {} (i.e. 0)".format(blackboard.config['scoring.xcorr']['min bin width']))
+        bin_ppm = blackboard.config['scoring.xcorr']['bin matching unit'] == 'ppm'
+        ppm_mode = blackboard.config['scoring.xcorr']['ppm mode']
+        window_size = blackboard.config['scoring.xcorr'].getint('correlation window size')
+        norm_windows = blackboard.config['scoring.xcorr'].getint('norm window count')
+        bin_resolution_setting = blackboard.config['scoring.xcorr'].getfloat('bin resolution')
+        max_mass = blackboard.config['processing.query'].getfloat('max mass')
+        min_resolution = max(0, blackboard.config['scoring.xcorr'].getfloat('min bin width'))
+        series_count = blackboard.config['scoring.xcorr'].getint('series count')
+        ignore_weights = blackboard.config['scoring.xcorr'].getboolean('ignore weights')
+
+        if bin_ppm and ppm_mode == 'bins':
+            if min_resolution == 0:
+                blackboard.LOG.fatal("Xcorr in ppm bins mode must have a non-zero min bin width, got {} (i.e. 0)".format(blackboard.config['scoring.xcorr']['min bin width']))
+                sys.exit(-1)
+
+        flank_mode = blackboard.config['scoring.xcorr']['flank mode']
+        flank_length = blackboard.config['scoring.xcorr'].getint('flank length')
+        if flank_length < 0:
+            blackboard.LOG.fatal("Xcorr flank length must be positive, got {}".format(blackboard.config['scoring.xcorr']['flank length']))
             sys.exit(-1)
+        intensity_cutoff = blackboard.config['scoring.xcorr'].getfloat('intensity cutoff')
+        match_mult = blackboard.config['scoring.xcorr'].getfloat('match multiplier')
 
-    flank_mode = blackboard.config['scoring.xcorr']['flank mode']
-    flank_length = blackboard.config['scoring.xcorr'].getint('flank length')
-    if flank_length < 0:
-        blackboard.LOG.fatal("Xcorr flank length must be positive, got {}".format(blackboard.config['scoring.xcorr']['flank length']))
-        sys.exit(-1)
-    intensity_cutoff = blackboard.config['scoring.xcorr'].getfloat('intensity cutoff')
-    match_mult = blackboard.config['scoring.xcorr'].getfloat('match multiplier')
+        bins = []
+        if bin_ppm and ppm_mode != 'bins':
+            curr_mass = max_mass
+            gap = curr_mass
+            while curr_mass > 0:
+                bins.append(curr_mass)
+                gap = max((bin_resolution_setting * 1e-6) * curr_mass, min_resolution)
+                curr_mass -= gap
+            bins.append(0)
+            bins = bins[::-1][:-1]
+        bins = numpy.asarray(bins, dtype='float32')
 
-    bins = []
-    if bin_ppm and ppm_mode != 'bins':
-        curr_mass = max_mass
-        gap = curr_mass
-        while curr_mass > 0:
-            bins.append(curr_mass)
-            gap = max((bin_resolution_setting * 1e-6) * curr_mass, min_resolution)
-            curr_mass -= gap
-        bins.append(0)
-        bins = bins[::-1][:-1]
-    bins = numpy.asarray(bins, dtype='float32')
+        ret = []
 
-    ret = []
+        bin_resolution = bin_resolution_setting
+        for q, cands in zip(qs, qcands):
+            ret.append([])
 
-    bin_resolution = bin_resolution_setting
-    for q, cands in zip(qs, qcands):
-        ret.append([])
+            charge = q['charge']
+            spectrum = numpy.asarray(pickle.loads(q['spec']), dtype='float32')
+            mass = q['mass']
 
-        charge = q['charge']
-        spectrum = numpy.asarray(q['spec'].data, dtype='float32')
-        mass = q['mass']
+            if bin_ppm and ppm_mode == 'mass':
+                bin_resolution = max(mass * 1e-6 * bin_resolution_setting, min_resolution)
+            elif bin_ppm and ppm_mode == 'max':
+                bin_resolution = max(spectrum[:,0].max() * 1e-6 * bin_resolution_setting, min_resolution)
 
-        if bin_ppm and ppm_mode == 'mass':
-            bin_resolution = max(mass * 1e-6 * bin_resolution_setting, min_resolution)
-        elif bin_ppm and ppm_mode == 'max':
-            bin_resolution = max(spectrum[:,0].max() * 1e-6 * bin_resolution_setting, min_resolution)
+            filtered_spectrum = spectrum[spectrum[:,0] < mass + 50]
 
-        filtered_spectrum = spectrum[spectrum[:,0] < mass + 50]
+            binned = xcorr_normalize_spec(spectrum, mass, window_size, bin_resolution, norm_windows, bin_ppm and ppm_mode == 'bins', bins, intensity_cutoff, match_mult)
+            corrected = xcorr_correct_spec(binned, window_size, flank_mode, flank_length)
+            if corrected is None:
+                blackboard.LOG.fatal("Unrecognized flank mode '{}', aborting.".format(flank_mode))
+                sys.exit(-2)
 
-        binned = xcorr_normalize_spec(spectrum, mass, window_size, bin_resolution, norm_windows, bin_ppm and ppm_mode == 'bins', bins, intensity_cutoff, match_mult)
-        corrected = xcorr_correct_spec(binned, window_size, flank_mode, flank_length)
-        if corrected is None:
-            blackboard.LOG.fatal("Unrecognized flank mode '{}', aborting.".format(flank_mode))
-            sys.exit(-2)
+            for i in range(len(cands)):
+                c = cands[i]
+                frag = numpy.asarray(pickle.loads(c['spec']), dtype='float32')
+                # index 0 is charge 1, so charge-1 must be used
+                frag = numpy.ascontiguousarray(frag[:(charge-1)*2])
 
-        for i in range(len(cands)):
-            c = cands[i]
-            frag = numpy.asarray(c['spec'].data, dtype='float32')
-            # index 0 is charge 1, so charge-1 must be used
-            frag = numpy.ascontiguousarray(frag[:(charge-1)*2])
+                n_matches = 0
+                score = 0
+                n_series = 0
+                sumI = 0
+                total_lgt = 0
 
-            n_matches = 0
-            score = 0
-            n_series = 0
-            sumI = 0
-            total_lgt = 0
+                score, sumis, series_matches = xcorr_score(frag, corrected, binned, bin_resolution, bin_ppm and ppm_mode == 'bins', bins, ignore_weights)
+                sumI = sumis.sum()
+                n_matches = series_matches.sum()
 
-            score, sumis, series_matches = xcorr_score(frag, corrected, binned, bin_resolution, bin_ppm and ppm_mode == 'bins', bins, ignore_weights)
-            sumI = sumis.sum()
-            n_matches = series_matches.sum()
+                n_series = frag.shape[0] // series_count
+                total_lgt = frag.shape[1] * frag.shape[0]
 
-            n_series = frag.shape[0] // series_count
-            total_lgt = frag.shape[1] * frag.shape[0]
-
-            if score <= 0:
-                ret[-1].append({'score': 0})
-                continue
-            else:
-                ret[-1].append({"dM": float((c['mass'] - q['mass']) / c['mass']),
-                            "absdM": abs((c['mass'] - q['mass']) / c['mass']),
-                            "peplen": len(c['seq']),
-                            "ionFrac": float(n_matches / total_lgt),
-                            #'relIntTotMatch': sumI / norm,
-                            'charge': int(q['charge']),
-                            'z2': int(q['charge'] == 2),
-                            'z3': int(q['charge'] == 3),
-                            'z4': int(q['charge'] == 4),
-                            'rawscore': float(score),
-                            #'xcorr': xcorr,
-                            'expMass': float(q['mass']),
-                            'calcMass': float(c['mass']),
-                            'score': float(score), 'sumI': float(sumI), 'total_matched': int(n_matches), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
-    return ret
+                if score <= 0:
+                    ret[-1].append({'score': 0})
+                    continue
+                else:
+                    ret[-1].append({"dM": float((c['mass'] - q['mass']) / c['mass']),
+                                "absdM": abs((c['mass'] - q['mass']) / c['mass']),
+                                "peplen": len(c['seq']),
+                                "ionFrac": float(n_matches / total_lgt),
+                                #'relIntTotMatch': sumI / norm,
+                                'charge': int(q['charge']),
+                                'z2': int(q['charge'] == 2),
+                                'z3': int(q['charge'] == 3),
+                                'z4': int(q['charge'] == 4),
+                                'rawscore': float(score),
+                                #'xcorr': xcorr,
+                                'expMass': float(q['mass']),
+                                'calcMass': float(c['mass']),
+                                'score': float(score), 'sumI': float(sumI), 'total_matched': int(n_matches), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+        return ret
 
 @numba.njit(locals={'scale': numba.int32, 'i': numba.int32, 'bins': numba.float32[::1]})
 def get_bin_index(mass, bins):
@@ -413,20 +400,23 @@ def xcorr_score(cand, corrected, normed, bin_resolution=0.02, bin_ppm=False, bin
             seen.add(idx)
     return ret, sumis, nmatches
 
-def xcorr_hyperscore(qcands, qs):
-    """
-    Sample scoring function: Xcorr
-    """
+class xcorr_hyperscore(object):
+    required_fields = {'candidates': ['spec', 'mass', 'seq', 'mods', 'desc'], 'queries': ['title', 'spec', 'mass', 'charge']}
 
-    ret_xcorr = xcorr(qcands, qs)
-    ret_hscore = hyperscore(qcands, qs)
+    def __new__(cls, qcands, qs):
+        """
+        Sample scoring function: Xcorr
+        """
 
-    ret = [[{**rh, **rx, 'xcorr': rx['score'], 'hyperscore': rh['score']} for rx, rh in zip(retx, reth)] for retx, reth in zip(ret_xcorr, ret_hscore)]
-    for re in ret:
-        for r in re:
-            r['score'] = float(max(0, r['xcorr'], numpy.sqrt(numpy.log10(r['hyperscore'] + 1)), r['xcorr'] * numpy.sqrt(numpy.log10(r['hyperscore'] + 1))))
+        ret_xcorr = xcorr(qcands, qs)
+        ret_hscore = hyperscore(qcands, qs)
 
-    return ret
+        ret = [[{**rh, **rx, 'xcorr': rx['score'], 'hyperscore': rh['score']} for rx, rh in zip(retx, reth)] for retx, reth in zip(ret_xcorr, ret_hscore)]
+        for re in ret:
+            for r in re:
+                r['score'] = float(max(0, r['xcorr'], numpy.sqrt(numpy.log10(r['hyperscore'] + 1)), r['xcorr'] * numpy.sqrt(numpy.log10(r['hyperscore'] + 1))))
+
+        return ret
 
 def stub_filter(cands, q):
     return cands
@@ -447,13 +437,20 @@ def search_core(start, end):
     scoring_fn = pepid_utils.import_or(blackboard.config['scoring']['function'], xcorr)
     select_fn = pepid_utils.import_or(blackboard.config['scoring']['candidate filtering function'], stub_filter)
 
+    rows = set()
+    rows.add('rowid')
+    rows.add('min_mass')
+    rows.add('max_mass')
+    rows.update(getattr(scoring_fn, 'required_fields', {}).get('queries', []))
+    rows.update(getattr(select_fn, 'required_fields', {}).get('queries', []))
+
     batch_size = blackboard.config['scoring'].getint('batch size')
 
     cur = blackboard.CONN.cursor()
     res_cur = blackboard.RES_CONN.cursor()
     m_cur = blackboard.META_CONN.cursor()
 
-    blackboard.execute(cur, blackboard.select_str("queries", ["rowid"] + blackboard.QUERY_COLS, "WHERE rowid BETWEEN ? AND ?"), (start+1, end))
+    blackboard.execute(cur, "SELECT {} FROM queries WHERE rowid BETWEEN ? AND ?;".format(",".join(rows)), (start+1, end))
     queries = cur.fetchall()
 
     rrow = 1
@@ -502,10 +499,16 @@ def search_core(start, end):
                 fname_prefix = blackboard.RES_DB_FNAME.rsplit(".", 1)[0]
         return rrow
 
+    rows = set()
+    rows.add('rowid')
+    rows.update(getattr(scoring_fn, 'required_fields', {}).get('candidates', []))
+    rows.update(getattr(select_fn, 'required_fields', {}).get('candidates', []))
+
     for iq, q in enumerate(queries):
         quers.append(q)
         cands.append([])
-        blackboard.execute(cur, blackboard.select_str("candidates", ["rowid"] + blackboard.DB_COLS, "WHERE mass BETWEEN ? AND ?"), (q['min_mass'], q['max_mass']))
+
+        blackboard.execute(cur, "SELECT {} FROM candidates WHERE mass BETWEEN ? AND ?;".format(",".join(rows)), (q['min_mass'], q['max_mass']))
         
         while True:
             raw_set = cur.fetchmany(batch_size)

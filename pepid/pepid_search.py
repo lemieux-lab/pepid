@@ -184,6 +184,6 @@ if __name__ == "__main__":
     if(not os.path.exists(blackboard.TMP_PATH)):
         os.mkdir(blackboard.TMP_PATH)
 
-    blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
+    blackboard.LOCK = blackboard.acquire_lock()
 
     run(cfg_file)

@@ -41,15 +41,6 @@ RES_DB_PATH = None
 META_DB_PATH = None
 TMP_PATH = None
 
-# Simple wrapper to hook into the sqlite3 auto-conversion system...
-class Spectrum(object):
-    def __init__(self, x):
-        self.data = x
-
-class Meta(object):
-    def __init__(self, x):
-        self.data = x
-
 def create_table_str(table_name, table_cols, table_types, extra=[]):
     return "CREATE TABLE IF NOT EXISTS {} ({});".format(table_name, ",".join(list(map(lambda x: "{} {}".format(x[0], x[1]), zip(table_cols, table_types))) + extra))
 
@@ -167,16 +158,10 @@ def setup_constants():
     META_TYPES = ["INTEGER", "INTEGER", "BLOB", "BLOB", "REAL", "INTEGER"]
 
     DB_COLS = ["desc", "decoy", "rt", "length", "mass", "seq", "mods", "spec", "meta"]
-    DB_TYPES = ["TEXT", "INTEGER", "REAL", "INTEGER", "REAL", "TEXT", "AUTOBLOB", "SPECTRUM", "META"]
+    DB_TYPES = ["TEXT", "INTEGER", "REAL", "INTEGER", "REAL", "TEXT", "BLOB", "BLOB", "BLOB"]
 
     QUERY_COLS = ["title", "rt", "charge", "mass", "spec", "min_mass", "max_mass", "meta"]
-    QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "SPECTRUM", "REAL", "REAL", "META"]
-
-    sqlite3.register_adapter(Spectrum, lambda x: pickle.dumps(x.data))
-    sqlite3.register_adapter(Meta, lambda x: msgpack.dumps(x.data))
-    sqlite3.register_converter("spectrum", lambda x: Spectrum(pickle.loads(x)))
-    sqlite3.register_converter("meta", lambda x: Meta(msgpack.loads(x)))
-    sqlite3.register_converter("autoblob", lambda x: msgpack.loads(x))
+    QUERY_TYPES = ["TEXT", "REAL", "INTEGER", "REAL", "BLOB", "REAL", "REAL", "META"]
 
     DB_FNAME = list(filter(lambda x: len(x) > 0, config['data']['database'].split('/')))[-1].rsplit('.', 1)[0]
     RES_DB_FNAME = DB_FNAME + ".sqlite"
@@ -268,11 +253,23 @@ def subprocess(args):
     proc = sp.Popen(payload)
     return proc
 
-def lock():
-    fcntl.lockf(LOCK, fcntl.LOCK_EX)
+def lock(f=None):
+    if f is None:
+        f = LOCK
+    fcntl.lockf(f, fcntl.LOCK_EX)
 
-def unlock():
-    fcntl.lockf(LOCK, fcntl.LOCK_UN)
+def unlock(f=None):
+    if f is None:
+        f = LOCK
+    fcntl.lockf(f, fcntl.LOCK_UN)
+
+def acquire_lock(f=None):
+    if f is None:
+        f = os.path.join(TMP_PATH, ".lock")
+    else:
+        f = os.path.join(TMP_PATH, ".lock_" + f)
+    lock_file = open(f, "wb")
+    return lock_file
 
 def here(path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), path)

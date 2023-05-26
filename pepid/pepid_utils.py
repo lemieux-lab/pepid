@@ -135,13 +135,68 @@ def calc_qval(scores, is_target):
         fdrs[i] = running
     return fdrs
 
+import numba
+
+@numba.njit()
+def dense_to_sparse(spec, n_max=2000):
+    ret = numpy.zeros((spec.shape[0], n_max, 2), dtype='float32')
+    for i in range(spec.shape[0]):
+        nz = numpy.nonzero(spec[i])[0][:n_max]
+        ret[i,:len(nz),:] = numpy.asarray(list(zip(nz, spec[i][nz])), dtype='float32')
+    return ret
+
+@numba.njit()
+def sparse_to_dense(spec, n_max=50000):
+    ret = numpy.zeros((n_max,), dtype='float32')
+    for mz, intens in spec:
+        ret[int(mz)] += intens
+    return ret
+
+def generate_pin_header(header, line):
+    import blackboard
+
+    extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
+    use_extra = blackboard.config['misc.tsv_to_pin'].getboolean('use extra')
+    if extra_fn is not None:
+        extra_fn = import_or(extra_fn, None)
+
+    user_extra = None
+    if extra_fn is not None:
+        user_extra = extra_fn(header, [[line]])[0][0]
+
+    import sqlite3
+    import os
+    import msgpack
+    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, line[header.index('file')] + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("SELECT rrow, data, extra FROM meta LIMIT 1;")
+    meta = cur.fetchone()
+
+    parsed_meta = {k: v for k, v in msgpack.loads(meta['data']).items() if type(v) != str}
+    if use_extra:
+        extras = msgpack.loads(meta['extra'])
+        parsed_meta = {**parsed_meta, **extras}
+        if user_extra is not None:
+            parsed_meta = {**parsed_meta, **user_extra}
+        feats = sorted(list(parsed_meta.keys()))
+        if 'score' in feats:
+            feats.append('deltLCn')
+
+        head = ['PSMId', 'Label', 'ScanNr']
+        if 'expMass' in feats and 'calcMass' in feats:
+            head.extend(['expMass', 'calcMass'])
+        head.extend(feats)
+        head.extend(['Peptide', 'Proteins'])
+
+        return head
+
 def tsv_to_pin(header, lines, start=0):
     import blackboard
     import sqlite3
     import os
     import msgpack
-
-    feats = None
 
     score_idx = header.index('score')
     file_idx = header.index('file')

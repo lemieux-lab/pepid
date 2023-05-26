@@ -1,6 +1,7 @@
 import numpy
 import time
 import msgpack
+import pickle
 import sys
 
 if __package__ is None or __package__ == '':
@@ -8,16 +9,56 @@ if __package__ is None or __package__ == '':
 else:
     from . import blackboard
 
-# This is an example user script containing user functions that may be specified in the config
+import numba
+
+@numba.njit(locals={'mult': numba.float32, 'size': numba.int32})
+def blit_spectrum(spec, size, mult):
+    spec_raw = numpy.zeros((size,), dtype='float32')
+    for mz, intens in spec:
+        if mz == 0:
+            break
+        if mz / mult >= size - 0.5:
+            break
+        spec_raw[int(numpy.round(mz / mult))] += intens
+    max = spec_raw.max()
+    if max != 0:
+        spec_raw /= max
+
+    return spec_raw
+
+@numba.njit(locals={'max_mz': numba.int32, 'mult': numba.float32})
+def correlate_spectra(blit, mlspec, max_mz, mult):
+    corr = 0
+    sqr_ml = 0
+    sqr_blit = 0
+    for mz, intens in mlspec:
+        if int(mz) >= max_mz / mult:
+            break
+        blit_int = blit[int(mz)]
+        corr += blit_int * intens
+        sqr_ml += intens**2
+        sqr_blit += blit_int**2
+    corr /= (numpy.sqrt(sqr_blit) * numpy.sqrt(sqr_ml) + 1e-10)
+
+    return corr
 
 def specgen_features(header, lines):
+    import sqlite3
+
     batch_size = blackboard.config['pin.specgen_features'].getint('batch size')
 
     cand_file = blackboard.DB_PATH + "_cands.sqlite"
     qfile = blackboard.DB_PATH + "_q.sqlite"
 
+    if __package__ is None or __package__ == '':
+        from ml import specgen
+    else:
+        from .ml import specgen
+
     conn = sqlite3.connect(cand_file, detect_types=1)
     connq = sqlite3.connect(qfile, detect_types=1)
+    conn.row_factory = sqlite3.Row
+    connq.row_factory = sqlite3.Row
     cur = conn.cursor()
     curq = connq.cursor()
 
@@ -27,97 +68,83 @@ def specgen_features(header, lines):
         cands = [l[header.index('candrow')] for ll in lines[i:i+batch_size] for l in ll]
         quers = [l[header.index('qrow')] for ll in lines[i:i+batch_size] for l in ll]
         cur.execute("SELECT rowid, meta FROM candidates WHERE rowid IN ({}) ORDER BY rowid;".format(",".join(cands)))
-        curq.execute("SELECT rowid, spec FROM candidates WHERE rowid in ({}) ORDER BY rowid;".format(",".join(quers)))
-        extras = {r['rowid'] : msgpack.loads(r['meta'])['MLSpec'] for r in cur.fetchall()}
+        curq.execute("SELECT rowid, spec FROM queries WHERE rowid in ({}) ORDER BY rowid;".format(",".join(quers)))
+        extras = {r['rowid'] : numpy.asarray(msgpack.loads(r['meta'])['MLSpec'], dtype='float32') for r in cur.fetchall()}
         specs = {r['rowid'] : pickle.loads(r['spec']) for r in curq.fetchall()}
 
         for query_lines in lines[i:i+batch_size]:
             ret.append([])
-            charge = line[header.index('query_charge')]-1
-            spec = specs[line[int(header.index('qrow'))]]
-            blit = numpy.zeros((5000*10,), dtype='float32') # XXX
-            for mz, intens in spec:
-                if int(numpy.round(mz * 10)) >= 5000*10 - 0.5:
-                    break
-                blit[int(numpy.round(mz * 10))] += intens
-            blit = blit / (blit.max() + 1e-10)
-            blit_norm = numpy.linalg.norm(blit)
             for line in query_lines:
-                mlspec = extras[line[int(header.index('candrow'))]][charge]
-                corr = 0
-                for mz, intens in mlspec:
-                    if int(numpy.round(mz * 10)) >= 5000*10 - 0.5:
-                        break
-                    corr += blit[int(numpy.round(mz*10))] * intens
-                corr /= (blit_norm * numpy.sqrt(sum([x[0]**2 for x in mlspec])) + 1e-10)
+                charge = int(line[header.index('query_charge')])-1
+                spec = specs[int(line[header.index('qrow')])]
+                blit = specgen.prepare_spec(spec)
+                mlspec = extras[int(line[header.index('candrow')])][charge]
+                corr = correlate_spectra(blit, mlspec, specgen.MAX_MZ, 1.0 / specgen.SIZE_RESOLUTION_FACTOR)
                 ret[-1].append({'MLCorr': corr})
     return ret
 
 model = None
-def predict_length(queries):
-    batch_size = blackboard.config['postprocessing.length'].getint('batch size')
-    device = blackboard.config['postprocessing.length']['device']
-    import torch
+class predict_length(object):
+    required_fields = {'queries': ['spec', 'mass', 'meta']}
 
-    if __package__ is None or __package__ == '':
-        from ml import best_lgt_model as length_model
-    else:
-        from .ml import best_lgt_model as length_model
+    def __new__(cls, queries):
+        batch_size = blackboard.config['postprocessing.length'].getint('batch size')
+        device = blackboard.config['postprocessing.length']['device']
+        if 'cuda' in device:
+            blackboard.lock()
+            gpu_lock = blackboard.acquire_lock(device)
 
-    global model
-    if model is None:      
-        model = length_model.Model()
-        model.to(device)
-        model.load_state_dict(torch.load(blackboard.here('ml/best_lgt_model.pkl'), map_location=device))
+            blackboard.lock(gpu_lock)
 
-    ret = []
-    batch = []
-    for iq, query in enumerate(queries):
-        spec = query['spec'].data
-        spec = spec[:length_model.PROT_TGT_LEN]
-        precmass = query['mass']
+            blackboard.unlock()
 
-        spec_raw = numpy.zeros((length_model.PROT_TGT_LEN,), dtype='float32')
-        for mz, intens in spec:
-            if mz == 0:
-                break
-            if mz / length_model.SIZE_RESOLUTION_FACTOR >= length_model.PROT_TGT_LEN - 0.5:
-                break
-            spec_raw[int(numpy.round(mz / length_model.SIZE_RESOLUTION_FACTOR))] += intens
-        max = spec_raw.max()
-        if max != 0:
-            spec_raw /= max
+        import torch
 
-        extra = query['meta'].data
-
-        batch.append([spec_raw, precmass, extra])
-        if len(batch) % batch_size == 0 or (len(batch) > 0 and iq == len(queries)-1):
-            spec_batch = numpy.array([b[0] for b in batch])
-            precmass_batch = numpy.array([b[1] for b in batch]).reshape((-1, 1)) / 2000.
-            out = model(torch.FloatTensor(spec_batch).to(device), torch.FloatTensor(precmass_batch).to(device))
-            preds = numpy.exp(out['pred'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy()).tolist()
-            for ib in range(len(batch)):
-                if batch[ib][-1] is not None:
-                    ret.append({**batch[ib][-1], 'LgtPred': preds[ib]})
-                else:
-                    ret.append({'LgtPred': preds[ib]})
-            batch = []
-    return ret
-
-def insert_gt_length(queries):
-    ret = []
-    for iq, query in enumerate(queries):
-        extra = query['meta'].data
-        if 'mgf:SEQ' not in extra:
-            blackboard.LOG.error("Missing key 'mgf:SEQ' for insert_gt_length. Did you forget to run pepid_mgf_meta?")
-            sys.exit(-2)
+        if __package__ is None or __package__ == '':
+            from ml import best_lgt_model as length_model
         else:
-            lgt = len(extra['mgf:SEQ'].replace("M(ox)", "1"))
-            pred = numpy.zeros((40-6+1), dtype='float32')
-            pred[lgt-6] = 1.
-            extra['LgtPred'] = pred.tolist()
-        ret.append(extra)
-    return ret
+            from .ml import best_lgt_model as length_model
+
+        global model
+        if model is None:      
+            model = length_model.Model()
+            model.to(device)
+            model.load_state_dict(torch.load(blackboard.here('ml/best_lgt_model.pkl'), map_location=device))
+
+        ret = []
+        batch = []
+        for iq, query in enumerate(queries):
+            spec = pickle.loads(query['spec'])
+            spec = numpy.asarray(spec[:length_model.PROT_TGT_LEN], dtype='float32')
+            precmass = query['mass']
+
+            spec_raw = blit_spectrum(spec, length_model.PROT_TGT_LEN, length_model.SIZE_RESOLUTION_FACTOR)
+            extra = msgpack.loads(query['meta'])
+
+            batch.append([spec_raw, precmass, extra])
+            if len(batch) % batch_size == 0 or (len(batch) > 0 and iq == len(queries)-1):
+                spec_batch = numpy.array([b[0] for b in batch])
+                precmass_batch = numpy.array([b[1] for b in batch]).reshape((-1, 1)) / 2000.
+                with torch.no_grad():
+                    out = model(torch.FloatTensor(spec_batch).to(device), torch.FloatTensor(precmass_batch).to(device))
+                    preds = numpy.exp(out['pred'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy()).tolist()
+                for ib in range(len(batch)):
+                    if batch[ib][-1] is not None:
+                        ret.append({**batch[ib][-1], 'LgtPred': preds[ib]})
+                    else:
+                        ret.append({'LgtPred': preds[ib]})
+                batch = []
+        if 'cuda' in device:
+            import gc
+
+            del model
+            model = None
+            gc.collect()
+
+            torch.cuda.empty_cache()
+            blackboard.unlock(gpu_lock)
+
+        return ret
 
 def postprocess_for_length(start, end):
     import glob
@@ -190,7 +217,7 @@ def postprocess_for_length(start, end):
                 m = msgpack.loads(data['extra'])
                 if m is None:
                     m = {}
-                preds = numpy.asarray(qmeta[results_base[idata]['qrow']].data['LgtPred'])
+                preds = numpy.asarray(msgpack.loads(qmeta[results_base[idata]['qrow']])['LgtPred'])
                 bests = numpy.argsort(preds, axis=-1)[::-1]
                 m['LgtPred'] = float(preds.argmax(axis=-1) + length_model.GT_MIN_LGT)
                 m['LgtProb'] = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
@@ -212,20 +239,23 @@ def postprocess_for_length(start, end):
         del cur_meta
         del conn_meta
 
-def length_filter(cands, query):
-    meta = query['meta'].data
+class length_filter(object):
+    required_fileds = {'candidates': ['length'], 'queries': ['meta']}
 
-    best_lgts = numpy.argsort(meta['LgtPred'])[::-1] + 6
+    def __new__(cls, cands, query):
+        meta = msgpack.loads(query['meta'])
 
-    ret = []
-    for c in cands:
-        probs = numpy.asarray([meta['LgtPred'][b-6] for b in best_lgts])
-        if (probs[c['length']-6] >= 0.25):
-            if c['length'] in best_lgts[:2]:
+        best_lgts = numpy.argsort(meta['LgtPred'])[::-1] + 6
+
+        ret = []
+        for c in cands:
+            probs = numpy.asarray([meta['LgtPred'][b-6] for b in best_lgts])
+            if (probs[c['length']-6] >= 0.25):
+                if c['length'] in best_lgts[:2]:
+                    ret.append(c)
+            else:
                 ret.append(c)
-        else:
-            ret.append(c)
-    return ret
+        return ret
 
 def stub(*args):
     return None

@@ -44,7 +44,7 @@ class DbNode(node.Node):
         self.path = struct.unpack("!{}sc".format(lgt), msg[4:])[0].decode('utf-8')
         blackboard.TMP_PATH = self.path
         blackboard.setup_constants()
-        blackboard.LOCK = open(os.path.join(blackboard.TMP_PATH, ".lock"), "wb")
+        blackboard.LOCK = blackboard.acquire_lock()
         blackboard.prepare_connection()
 
 if __name__ == '__main__':
