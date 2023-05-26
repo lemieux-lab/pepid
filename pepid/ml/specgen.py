@@ -32,24 +32,22 @@ N_MASS_REPS = MAX_CHARGE
 
 INP_SIZE = SEQ_SIZE+2
 
-def make_input(seq, mods):
-    all_masses = []
-    for z in range(1, 6):
-        all_masses.append(numpy.asarray(pepid_utils.theoretical_masses(seq, mods, nterm=NTERM, cterm=CTERM, exclude_end=True)).reshape((-1,2))[:,0])
+def make_inputs(seqs, seqmods):
+    th_spec = numpy.zeros((len(seqs), PROT_TGT_LEN, 5+1), dtype='float32')
+    for i, (seq, mods) in enumerate(zip(seqs, seqmods)):
+        all_masses = []
 
-    th_spec = numpy.zeros((PROT_TGT_LEN, 5+1), dtype='float32')
-    for z in range(len(all_masses)):
-        for mz in sorted(all_masses[z]):
-            if int(numpy.round(mz / SIZE_RESOLUTION_FACTOR)) < PROT_TGT_LEN:
-                th_spec[int(numpy.round(mz / SIZE_RESOLUTION_FACTOR)), z] += 1
-            else:
-                break
-        th_spec[:,z] /= (th_spec[:,z].max() + 1e-10)
+        for z in range(1, 6):
+            masses = numpy.asarray(pepid_utils.theoretical_masses(seq, mods, nterm=NTERM, cterm=CTERM, exclude_end=True), dtype='float32').reshape((-1,2))
+            th_spec[i,:,z-1] = pepid_utils.blit_spectrum(masses, PROT_TGT_LEN, SIZE_RESOLUTION_FACTOR)
 
-    mass = pepid_utils.neutral_mass(seq, mods, nterm=NTERM, cterm=CTERM, z=1)
-    th_spec[min(PROT_TGT_LEN-1, int(numpy.round(mass / SIZE_RESOLUTION_FACTOR))),5] = 1
+        mass = pepid_utils.neutral_mass(seq, mods, nterm=NTERM, cterm=CTERM, z=1)
+        th_spec[i,min(PROT_TGT_LEN-1, int(numpy.round(mass / SIZE_RESOLUTION_FACTOR))),5] = 1
 
     return th_spec
+
+def make_input(seq, mods):
+    return make_inputs([seq], [mods])[0]
 
 def blit_spec(spec):
     spec_fwd = numpy.zeros((PROT_TGT_LEN,))

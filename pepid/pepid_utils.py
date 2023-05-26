@@ -152,6 +152,21 @@ def sparse_to_dense(spec, n_max=50000):
         ret[int(mz)] += intens
     return ret
 
+@numba.njit(locals={'mult': numba.float32, 'size': numba.int32})
+def blit_spectrum(spec, size, mult):
+    spec_raw = numpy.zeros((size,), dtype='float32')
+    for mz, intens in spec:
+        if mz == 0:
+            break
+        if mz / mult >= size - 0.5:
+            break
+        spec_raw[int(numpy.round(mz / mult))] += intens
+    max = spec_raw.max()
+    if max != 0:
+        spec_raw /= max
+
+    return spec_raw
+
 def generate_pin_header(header, line):
     import blackboard
 

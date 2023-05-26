@@ -108,19 +108,26 @@ class post_ml_spectrum(object):
 
         cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
         nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
-        #max_charge = blackboard.config['processing.db'].getint('max charge')
 
-        out = []
-        embs = []
-        for i in range(len(cands)):
-            embs.append(specgen.make_input(cands[i]['seq'], cands[i]['mods']))
-        embs = torch.FloatTensor(numpy.asarray(embs))
+        seqs = []
+        mods = []
+        for c in cands:
+            seqs.append(c['seq'])
+            mods.append(c['mods'])
+        embs = torch.FloatTensor(specgen.make_inputs(seqs, mods))
+
+        out = None
+
         with torch.no_grad():
             for bidx in range(0, len(embs), batch_size):
-                out.append(MODEL(embs[bidx:bidx+batch_size].to(device)))
-                sparsy = (out[-1] * (out[-1] >= 1e-3)).detach().cpu().numpy()
-                out[-1] = numpy.stack([pepid_utils.dense_to_sparse(sparsy[s]) for s in range(len(sparsy))], axis=0)
-        out = numpy.concatenate(out, axis=0)
+                pred = MODEL(embs[bidx:bidx+batch_size].to(device))
+                sparsy = (pred * (pred >= 1e-3)).detach().cpu().numpy()
+                sparsed = pepid_utils.dense_to_sparse(sparsy.reshape((-1, sparsy.shape[-1])))
+                sparsed = sparsed.reshape((-1, sparsy.shape[1], sparsed.shape[-2], 2))
+                if out is not None:
+                    numpy.concatenate((out, sparsed), axis=0)
+                else:
+                    out = sparsed
 
         if 'cuda' in device:
             import gc
@@ -130,11 +137,10 @@ class post_ml_spectrum(object):
             torch.cuda.empty_cache()
             blackboard.unlock(gpu_lock)
 
-        ret = []
-        for o in range(out.shape[0]):
-            cands[o]['meta'] = msgpack.dumps({'MLSpec': out[o].tolist()})
-            ret.append(cands[o])
-        return ret
+        out = out.tolist()
+        for o in range(len(out)):
+            cands[o]['meta'] = msgpack.dumps({'MLSpec': out[o]})
+        return cands
 
 class theoretical_spectrum(object):
     required_fields = {'candidates': ['seq', 'mods']}

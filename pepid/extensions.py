@@ -6,25 +6,12 @@ import sys
 
 if __package__ is None or __package__ == '':
     import blackboard
+    import pepid_utils
 else:
     from . import blackboard
+    from . import pepid_utils
 
 import numba
-
-@numba.njit(locals={'mult': numba.float32, 'size': numba.int32})
-def blit_spectrum(spec, size, mult):
-    spec_raw = numpy.zeros((size,), dtype='float32')
-    for mz, intens in spec:
-        if mz == 0:
-            break
-        if mz / mult >= size - 0.5:
-            break
-        spec_raw[int(numpy.round(mz / mult))] += intens
-    max = spec_raw.max()
-    if max != 0:
-        spec_raw /= max
-
-    return spec_raw
 
 @numba.njit(locals={'max_mz': numba.int32, 'mult': numba.float32})
 def correlate_spectra(blit, mlspec, max_mz, mult):
@@ -118,7 +105,7 @@ class predict_length(object):
             spec = numpy.asarray(spec[:length_model.PROT_TGT_LEN], dtype='float32')
             precmass = query['mass']
 
-            spec_raw = blit_spectrum(spec, length_model.PROT_TGT_LEN, length_model.SIZE_RESOLUTION_FACTOR)
+            spec_raw = pepid_utils.blit_spectrum(spec, length_model.PROT_TGT_LEN, length_model.SIZE_RESOLUTION_FACTOR)
             extra = msgpack.loads(query['meta'])
 
             batch.append([spec_raw, precmass, extra])
