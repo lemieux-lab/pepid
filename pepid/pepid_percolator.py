@@ -99,17 +99,17 @@ def rescore(cfg_file):
         feats.append('deltLCn')
     feats = [x for x in feats if x not in blackboard.FEATS_BLACKLIST]
 
-    fpin = open(pin_name, 'w')
-    pin_template = blackboard.pin_template()
-    pin_template[pin_template.index("FEATURES")] = "\t".join(feats)
-    fpin.write("\t".join(pin_template) + "\n")
-    fpin.close()
-
     cur.close()
     conn.close()
 
     log_level = blackboard.config['logging']['level'].lower()
     if blackboard.config['misc.tsv_to_pin'].getboolean('enabled'):
+        fpin = open(pin_name, 'w')
+        pin_template = blackboard.pin_template()
+        pin_template[pin_template.index("FEATURES")] = "\t".join(feats)
+        fpin.write("\t".join(pin_template) + "\n")
+        fpin.close()
+
         nworkers = blackboard.config['rescoring.percolator'].getint('pin workers')
         batch_size = blackboard.config['rescoring.percolator'].getint('pin batch size')
         n_total = queries.count_queries()

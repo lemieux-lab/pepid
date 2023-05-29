@@ -103,7 +103,7 @@ class post_ml_spectrum(object):
         global MODEL
 
         if MODEL is None:
-            MODEL = specgen.Model().to(device)
+            MODEL = specgen.Model().eval().to(device)
             MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen.pkl"), map_location=device))
 
         cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
@@ -116,18 +116,16 @@ class post_ml_spectrum(object):
             mods.append(c['mods'])
         embs = torch.FloatTensor(specgen.make_inputs(seqs, mods))
 
-        out = None
+        max_peaks = 2000
+        out = [None for _ in range(len(embs))]
 
         with torch.no_grad():
             for bidx in range(0, len(embs), batch_size):
                 pred = MODEL(embs[bidx:bidx+batch_size].to(device))
                 sparsy = (pred * (pred >= 1e-3)).detach().cpu().numpy()
-                sparsed = pepid_utils.dense_to_sparse(sparsy.reshape((-1, sparsy.shape[-1])))
+                sparsed = pepid_utils.dense_to_sparse(sparsy.reshape((-1, sparsy.shape[-1])), n_max = max_peaks)
                 sparsed = sparsed.reshape((-1, sparsy.shape[1], sparsed.shape[-2], 2))
-                if out is not None:
-                    numpy.concatenate((out, sparsed), axis=0)
-                else:
-                    out = sparsed
+                out[bidx:bidx+batch_size] = sparsed
 
         if 'cuda' in device:
             import gc
@@ -137,9 +135,8 @@ class post_ml_spectrum(object):
             torch.cuda.empty_cache()
             blackboard.unlock(gpu_lock)
 
-        out = out.tolist()
         for o in range(len(out)):
-            cands[o]['meta'] = msgpack.dumps({'MLSpec': out[o]})
+            cands[o]['meta'] = pickle.dumps({'MLSpec': out[o]})
         return cands
 
 class theoretical_spectrum(object):
@@ -205,7 +202,6 @@ def user_processing(start, end):
         data[i]['spec'] = specs[i]
         data[i]['rt'] = rts[i]
     ret = user_fn(data)
-    #rowids = list(range(start+1, end+1))
 
     blackboard.executemany(cur, "UPDATE candidates SET {} WHERE rowid = :rowid;".format(",".join(["{} = :{}".format(k, k) for k in ret[0].keys()])), ret)
     #blackboard.executemany(cur, "REPLACE INTO candidates ({}) VALUES ({});".format(",".join(blackboard.DB_COLS), ",".join(list(map(lambda x: ":" + x, blackboard.DB_COLS)))), ret)

@@ -56,7 +56,8 @@ def specgen_features(header, lines):
         quers = [l[header.index('qrow')] for ll in lines[i:i+batch_size] for l in ll]
         cur.execute("SELECT rowid, meta FROM candidates WHERE rowid IN ({}) ORDER BY rowid;".format(",".join(cands)))
         curq.execute("SELECT rowid, spec FROM queries WHERE rowid in ({}) ORDER BY rowid;".format(",".join(quers)))
-        extras = {r['rowid'] : numpy.asarray(msgpack.loads(r['meta'])['MLSpec'], dtype='float32') for r in cur.fetchall()}
+        allcands = cur.fetchall()
+        extras = {r['rowid'] : pickle.loads(r['meta'])['MLSpec'] for r in allcands}
         specs = {r['rowid'] : pickle.loads(r['spec']) for r in curq.fetchall()}
 
         for query_lines in lines[i:i+batch_size]:
@@ -106,7 +107,7 @@ class predict_length(object):
             precmass = query['mass']
 
             spec_raw = pepid_utils.blit_spectrum(spec, length_model.PROT_TGT_LEN, length_model.SIZE_RESOLUTION_FACTOR)
-            extra = msgpack.loads(query['meta'])
+            extra = pickle.loads(query['meta'])
 
             batch.append([spec_raw, precmass, extra])
             if len(batch) % batch_size == 0 or (len(batch) > 0 and iq == len(queries)-1):
@@ -114,7 +115,7 @@ class predict_length(object):
                 precmass_batch = numpy.array([b[1] for b in batch]).reshape((-1, 1)) / 2000.
                 with torch.no_grad():
                     out = model(torch.FloatTensor(spec_batch).to(device), torch.FloatTensor(precmass_batch).to(device))
-                    preds = numpy.exp(out['pred'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy()).tolist()
+                    preds = numpy.exp(out['pred'].view(-1, length_model.GT_MAX_LGT-length_model.GT_MIN_LGT+1).detach().cpu().numpy())
                 for ib in range(len(batch)):
                     if batch[ib][-1] is not None:
                         ret.append({**batch[ib][-1], 'LgtPred': preds[ib]})
@@ -204,7 +205,8 @@ def postprocess_for_length(start, end):
                 m = msgpack.loads(data['extra'])
                 if m is None:
                     m = {}
-                preds = numpy.asarray(msgpack.loads(qmeta[results_base[idata]['qrow']])['LgtPred'])
+                preds = pickle.loads(qmeta[results_base[idata]['qrow']])['LgtPred']
+                #preds = numpy.asarray(msgpack.loads(qmeta[results_base[idata]['qrow']])['LgtPred'], dtype='float32')
                 bests = numpy.argsort(preds, axis=-1)[::-1]
                 m['LgtPred'] = float(preds.argmax(axis=-1) + length_model.GT_MIN_LGT)
                 m['LgtProb'] = float(preds[cand_lgt - length_model.GT_MIN_LGT] if (length_model.GT_MIN_LGT <= cand_lgt <= length_model.GT_MAX_LGT) else 0)
@@ -215,8 +217,8 @@ def postprocess_for_length(start, end):
                 m['LgtRelScore'] = float(m['LgtRelProb'] * results_base[idata]['score'])
                 m['LgtProbDeltaBest'] = float(m['LgtProb'] - preds[bests[0]])
                 m['LgtProbDeltaWorst'] = float(m['LgtProb'] - preds[bests[-1]])
-                m['LgtProbDeltaPrev'] = float(0 if m['LgtProb'] == 0 else (m['LgtProb'] - preds[max(preds[bests].tolist().index(preds[cand_lgt - length_model.GT_MIN_LGT]) - 1, 0)]))
-                m['LgtProbDeltaNext'] = float(0 if m['LgtProb'] == 0 else (m['LgtProb'] - preds[min(preds[bests].tolist().index(preds[cand_lgt - length_model.GT_MIN_LGT]) + 1, len(preds)-1)]))
+                m['LgtProbDeltaPrev'] = float(0 if m['LgtProb'] == 0 else (m['LgtProb'] - preds[max(preds[bests].searchsorted(preds[cand_lgt - length_model.GT_MIN_LGT]) - 1, 0)]))
+                m['LgtProbDeltaNext'] = float(0 if m['LgtProb'] == 0 else (m['LgtProb'] - preds[min(preds[bests].searchsorted(preds[cand_lgt - length_model.GT_MIN_LGT]) + 1, len(preds)-1)]))
                 new_meta.append({'rrow': data['rrow'], 'data': msgpack.dumps(m)})
             blackboard.executemany(cur_meta_mod, 'UPDATE meta SET extra = :data WHERE rrow = :rrow;', new_meta)
             conn_meta.commit()
