@@ -46,25 +46,25 @@ class PINNode(node.Node):
                 cnt += 1
                 if cnt < start:
                     continue
-                lines.append([])
                 if cnt >= end:
                     break
+                lines.append([])
             if start <= cnt < end:
                 lines[-1].append(l.strip().split("\t"))
 
         fin.close()
      
         lines = pepid_utils.tsv_to_pin(header, lines, start)
-        string = ""
         for l in lines:
+            string = ""
             for ll in l:
                 string += "\t".join(ll) + "\n"
 
-        blackboard.lock()
-        pin = open(pin_name, 'a')
-        pin.write(string)
-        pin.close()
-        blackboard.unlock()
+            blackboard.lock()
+            pin = open(pin_name, 'a')
+            pin.write(string)
+            pin.close()
+            blackboard.unlock()
 
     def prepare(self, msg):
         lgt = struct.unpack("!I", msg[:4])[0]

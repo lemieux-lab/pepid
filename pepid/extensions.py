@@ -13,7 +13,7 @@ else:
 
 import numba
 
-@numba.njit(locals={'max_mz': numba.int32, 'mult': numba.float32})
+@numba.njit(locals={'max_mz': numba.int32, 'mult': numba.float32, 'corr': numba.float32, 'sqr_ml': numba.float32, 'sqr_blit': numba.float32, 'mlspec': numba.float32[:,::1], 'blit': numba.float32[::1]})
 def correlate_spectra(blit, mlspec, max_mz, mult):
     corr = 0
     sqr_ml = 0
@@ -42,8 +42,8 @@ def specgen_features(header, lines):
     else:
         from .ml import specgen
 
-    conn = sqlite3.connect(cand_file, detect_types=1)
-    connq = sqlite3.connect(qfile, detect_types=1)
+    conn = sqlite3.connect(cand_file)
+    connq = sqlite3.connect(qfile)
     conn.row_factory = sqlite3.Row
     connq.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -52,21 +52,24 @@ def specgen_features(header, lines):
     ret = []
 
     for i in range(0, len(lines), batch_size):
-        cands = [l[header.index('candrow')] for ll in lines[i:i+batch_size] for l in ll]
-        quers = [l[header.index('qrow')] for ll in lines[i:i+batch_size] for l in ll]
+        the_lines = lines[i:i+batch_size]
+        cands = [l[header.index('candrow')] for ll in the_lines for l in ll]
+        quers = [l[header.index('qrow')] for ll in the_lines for l in ll]
         cur.execute("SELECT rowid, meta FROM candidates WHERE rowid IN ({}) ORDER BY rowid;".format(",".join(cands)))
         curq.execute("SELECT rowid, spec FROM queries WHERE rowid in ({}) ORDER BY rowid;".format(",".join(quers)))
         allcands = cur.fetchall()
         extras = {r['rowid'] : pickle.loads(r['meta'])['MLSpec'] for r in allcands}
-        specs = {r['rowid'] : pickle.loads(r['spec']) for r in curq.fetchall()}
+        specs = {r['rowid'] : numpy.asarray(pickle.loads(r['spec']), dtype='float32') for r in curq.fetchall()}
 
         for query_lines in lines[i:i+batch_size]:
+            if len(query_lines) == 0:
+                break
             ret.append([])
             for line in query_lines:
                 charge = int(line[header.index('query_charge')])-1
                 spec = specs[int(line[header.index('qrow')])]
                 blit = specgen.prepare_spec(spec)
-                mlspec = extras[int(line[header.index('candrow')])][charge]
+                mlspec = extras[int(line[header.index('candrow')])][min(charge, specgen.MAX_CHARGE-1)]
                 corr = correlate_spectra(blit, mlspec, specgen.MAX_MZ, 1.0 / specgen.SIZE_RESOLUTION_FACTOR)
                 ret[-1].append({'MLCorr': corr})
     return ret

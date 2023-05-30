@@ -158,9 +158,10 @@ def blit_spectrum(spec, size, mult):
     for mz, intens in spec:
         if mz == 0:
             break
-        if mz / mult >= size - 0.5:
+        idx = int(numpy.round(mz / mult))
+        if idx >= size:
             break
-        spec_raw[int(numpy.round(mz / mult))] += intens
+        spec_raw[idx] += intens
     max = spec_raw.max()
     if max != 0:
         spec_raw /= max
@@ -241,6 +242,8 @@ def tsv_to_pin(header, lines, start=0):
 
     newlines = []
     for qlines in lines:
+        if len(qlines) == 0:
+            break
         idxs = numpy.argsort([float(line[score_idx]) for line in qlines])[::-1][:max_scores]
         newlines.append([qlines[idx] for idx in idxs])
     lines = newlines
@@ -292,5 +295,6 @@ def tsv_to_pin(header, lines, start=0):
             out_lines[-1].append(list(map(str, [qlines[j][title_idx], (1 - qlines[j][desc_idx].startswith(decoy_prefix)) * 2 - 1, start+il, *extraVals])))
 
             out_lines[-1][-1].extend(list(map(lambda k: numpy.format_float_positional(m[k], trim='0', precision=12), feats))) # percolator breaks if too many digits are provided
+
             out_lines[-1][-1].extend(["-." + qlines[j][seq_idx] + ".-", qlines[j][desc_idx]])
     return out_lines

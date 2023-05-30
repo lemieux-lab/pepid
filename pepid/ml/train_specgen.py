@@ -79,7 +79,7 @@ class MsDataset(Dataset):
                 seq = None
                 continue
 
-        spec = self.data.root.spectrum[self.idxs[idx]]
+        spec = numpy.asarray(self.data.root.spectrum[self.idxs[idx]], dtype='float32')
         th_spec = make_input(seq, mods)
         spec_fwd = prepare_spec(spec)
 

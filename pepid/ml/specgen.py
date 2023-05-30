@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
 import numpy
+import numba
 import tables
 
 import tqdm
@@ -22,6 +23,7 @@ NTERM, CTERM = config['processing.db'].getfloat('nterm cleavage'), config['proce
 SIZE_RESOLUTION_FACTOR = 10
 MAX_MZ = 5000
 PROT_TGT_LEN = MAX_MZ * SIZE_RESOLUTION_FACTOR
+MAX_PEAKS = 2000
 
 AA_LIST = pepid_utils.AMINOS
 SEQ_SIZE = len(AA_LIST)
@@ -39,33 +41,19 @@ def make_inputs(seqs, seqmods):
 
         for z in range(1, 6):
             masses = numpy.asarray(pepid_utils.theoretical_masses(seq, mods, nterm=NTERM, cterm=CTERM, exclude_end=True), dtype='float32').reshape((-1,2))
-            th_spec[i,:,z-1] = pepid_utils.blit_spectrum(masses, PROT_TGT_LEN, SIZE_RESOLUTION_FACTOR)
+            th_spec[i,:,z-1] = pepid_utils.blit_spectrum(masses, PROT_TGT_LEN, 1.0 / SIZE_RESOLUTION_FACTOR)
 
         mass = pepid_utils.neutral_mass(seq, mods, nterm=NTERM, cterm=CTERM, z=1)
-        th_spec[i,min(PROT_TGT_LEN-1, int(numpy.round(mass / SIZE_RESOLUTION_FACTOR))),5] = 1
+        th_spec[i,min(PROT_TGT_LEN-1, int(numpy.round(mass * SIZE_RESOLUTION_FACTOR))),5] = 1
 
     return th_spec
 
 def make_input(seq, mods):
     return make_inputs([seq], [mods])[0]
 
-def blit_spec(spec):
-    spec_fwd = numpy.zeros((PROT_TGT_LEN,))
-    for mz, intens in spec:
-        if mz == 0:
-            break
-        idx = int(numpy.round(mz / SIZE_RESOLUTION_FACTOR))
-        if idx < PROT_TGT_LEN:
-            spec_fwd[idx] += intens
-        else:
-            break
-    spec_fwd = spec_fwd / (spec_fwd.max() + 1e-10)
-
-    return spec_fwd
-
-
+@numba.njit()
 def prepare_spec(spec):
-    spec_fwd = blit_spec(spec)
+    spec_fwd = pepid_utils.blit_spectrum(spec, PROT_TGT_LEN, 1. / SIZE_RESOLUTION_FACTOR)
     spec_fwd = numpy.sqrt(spec_fwd)
 
     return spec_fwd

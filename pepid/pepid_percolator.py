@@ -5,6 +5,7 @@ import subprocess
 import re
 import math
 import msgpack
+import pepid_utils
 
 if __package__ is None or __package__ == '':
     import blackboard
@@ -79,35 +80,16 @@ def rescore(cfg_file):
     artifacts = [pin_name, pout_name, pepout_name, psmout_name, psmdout_name]
 
     # Dirty little hack to get the header right before we start multiprocessing
-    fin = open(in_fname, 'r')
-    header = next(fin).strip().split('\t')
-    first = next(fin).strip().split('\t')
-    fin.close()
-
-    conn = sqlite3.connect("file:" + os.path.join(blackboard.TMP_PATH, first[header.index('file')] + "_meta.sqlite") + "?cache=shared", detect_types=1, uri=True) 
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    cur.execute("SELECT data, extra FROM meta LIMIT 1;")
-    res = cur.fetchone()
-    first = msgpack.loads(res['data'])
-    if use_extra:
-        second = msgpack.loads(res['extra'])
-        if second is not None:
-            first = {**first, **second}
-    feats = sorted(list(first.keys()))
-    if 'score' in feats:
-        feats.append('deltLCn')
-    feats = [x for x in feats if x not in blackboard.FEATS_BLACKLIST]
-
-    cur.close()
-    conn.close()
-
     log_level = blackboard.config['logging']['level'].lower()
     if blackboard.config['misc.tsv_to_pin'].getboolean('enabled'):
+        fin = open(in_fname, 'r')
+        header = next(fin).strip().split('\t')
+        first = next(fin).strip().split('\t')
+        fin.close()
+
+        header = pepid_utils.generate_pin_header(header, first)
         fpin = open(pin_name, 'w')
-        pin_template = blackboard.pin_template()
-        pin_template[pin_template.index("FEATURES")] = "\t".join(feats)
-        fpin.write("\t".join(pin_template) + "\n")
+        fpin.write("\t".join(header) + "\n")
         fpin.close()
 
         nworkers = blackboard.config['rescoring.percolator'].getint('pin workers')
