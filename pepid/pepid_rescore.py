@@ -13,6 +13,8 @@ if __name__ == '__main__':
 
     blackboard.setup_constants()
 
+    blackboard.LOCK = blackboard.acquire_lock()
+
     rescore_fn = pepid_utils.import_or(blackboard.config['rescoring']['function'], None)
 
     if rescore_fn is not None:

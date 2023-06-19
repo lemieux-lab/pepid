@@ -6,17 +6,20 @@ import msgpack
 import tqdm
 import os
 import sqlite3
+import struct
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_utils
-    import queries
+    from pepid import blackboard
+    from pepid import pepid_utils
+    from pepid import queries
+    from pepid import pepid_mp
 else:
-    from . import blackboard
-    from . import pepid_utils
-    from . import queries
+    from .. import blackboard
+    from .. import pepid_utils
+    from .. import queries
+    from .. import pepid_mp
 
-def run():
+def run(cfg_file):
     log_level = blackboard.config['logging']['level'].lower()
     if blackboard.config['misc.tsv_to_pin'].getboolean('enabled'):
         nworkers = blackboard.config['rescoring.finetune_rf'].getint('pin workers')
@@ -28,32 +31,41 @@ def run():
                         [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_total), "$".encode("utf-8")) for b in range(n_batches)],
                         [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(nworkers)])]
 
-        pepid_mp.handle_nodes("PIN Generation", spec, cfg_file=cfg_file, tqdm_silence=log_level in ['fatal', 'error', 'warning'])
+        pepid_mp.handle_nodes("PIN Generation", spec, cfg_file=cfg_file, disable=log_level in ['fatal', 'error', 'warning'])
 
     in_fname = blackboard.config['data']['output']
     fname, fext = in_fname.rsplit('.', 1)
+    suffix = blackboard.config['rescoring']['suffix']
     pin_fname = fname + suffix + "_pin.tsv"
 
     f = open(pin_fname)
+    pin_header = next(f).strip().split('\t')
     
     import glob
 
     data = []
 
-    in_fname = blackboard.config['data']['output']
-    fname, fext = in_fname.rsplit('.', 1)
-    pin_fname = fname + suffix + "_pin.tsv"
-
-    conn = sqlite3.connect(os.path.join(blackboard.DB_PATH, "_q.sqlite"), detect_types=1)
+    conn = sqlite3.connect(blackboard.DB_PATH + "_q.sqlite", detect_types=1)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
+    forbidden_feats = set(['PSMId', 'Proteins', 'Peptide', 'ScanNr', 'Label'])
+    length_feats = set(['LgtDelta', 'LgtDeltaAbs', 'LgtPred', 'LgtProb', 'LgtProbDeltaBest', 'LgtProbDeltaNext', 'LgtProbDeltaPrev', 'LgtProbDeltaWorst', 'LgtRelProb', 'LgtRelScore', 'LgtScore'])
+    specgen_feats = set(['MLCorr'])
+
+    # XXX: To disable length and/or specgen feats to generate the partial rescorers:
+    #forbidden_feats |= length_feats
+    #forbidden_feats |= specgen_feats
+
+    the_feats = [f for f in pin_header if f not in forbidden_feats]
+    the_feats = numpy.unique(the_feats).tolist()
+
     staged = []
     prev_title = None
-    for li, l in tqdm.tqdm(enumerate(f), desc="reading from pin...", tqdm_silence=(log_level in ['fatal', 'error', 'warning'])):
+    for li, l in tqdm.tqdm(enumerate(f), desc="reading from pin...", disable=(log_level in ['fatal', 'error', 'warning'])):
         fields = l.strip().split("\t")
-        score = float(fields[header.index('score')])
-        title = fields[header.index('PSMId')]
+        score = float(fields[pin_header.index('score')])
+        title = fields[pin_header.index('PSMId')]
         if title != prev_title:
             prev_title = title
             if len(staged) > 0:
@@ -61,21 +73,21 @@ def run():
                 del staged
                 staged = []
         if not math.isinf(score):
-            staged.append((title, fields[header.index("Peptide")][2:-2], score, *[float(fields[header.index(f)]) for f in feats], float(fields[header.index('Label')]), -1))
+            staged.append((title, fields[pin_header.index("Peptide")][2:-2], score, *[float(fields[pin_header.index(f)]) for f in the_feats], float(fields[pin_header.index('Label')]), -1))
 
     data.extend(staged)
     del staged
 
-    data = numpy.asarray(data, dtype=[('title', object), ('seq', object), ('s', 'float32'), *[(feat, 'float32') for feat in feats], ('target', 'float32'), ('gt', 'float32')])
+    data = numpy.asarray(data, dtype=[('title', object), ('seq', object), ('s', 'float32'), *[(feat, 'float32') for feat in the_feats], ('target', 'float32'), ('gt', 'float32')])
 
     bs = 100000
     meta = {}
-    for i in tqdm.tqdm(range(0, len(data), bs), desc='collecting metadata', total = numpy.ceil(len(data) / bs), tqdm_silence=(log_level in ['warning', 'error', 'fatal'])):
+    for i in tqdm.tqdm(range(0, len(data), bs), desc='collecting metadata', total = numpy.ceil(len(data) / bs), disable=(log_level in ['warning', 'error', 'fatal'])):
         cur.execute("SELECT title, meta FROM queries WHERE title IN ({});".format(",".join(["\"{}\"".format(t) for t in data['title'][i:i+bs]])))
         things = cur.fetchall()
-        meta = meta | {m['title'] : msgpack.loads(m['meta'])['mgf:SEQ'] for m in things}
+        meta = meta | {m['title'] : pickle.loads(m['meta'])['mgf:SEQ'] for m in things}
 
-    for di in tqdm.tqdm(range(len(data)), desc='adding gt info', total = len(data), tqdm_silence=(log_level in ['warning', 'error', 'fatal'])):
+    for di in tqdm.tqdm(range(len(data)), desc='adding gt info', total = len(data), disable=(log_level in ['warning', 'error', 'fatal'])):
         seq = meta[data[di]['title']]
         data[di]['gt'] = ((seq.replace("M(ox)", "M[15.994915]").replace("C", "C[57.0215]") == data[di]['seq']) - 0.5)*2
 
@@ -86,10 +98,7 @@ def run():
     every = data
 
     names = every.dtype.names
-    feats = header.split("\t")
-    feats_template = blackboard.pin_template()
-    feats = [x for x in feats if x not in feats_template]
-    feat_idxs = [names.index(feat) for feat in feats]
+    feat_idxs = [names.index(feat) for feat in the_feats]
 
     import sklearn
     from sklearn import preprocessing
@@ -103,10 +112,12 @@ def run():
     best_score = 0
 
     feat_ipt = blackboard.config['rescoring.finetune_rf']['score']
+    if feat_ipt == '':
+        feat_ipt = None
     feat_dir = blackboard.config['rescoring.finetune_rf'].getboolean('descending')
 
     if feat_ipt is None:
-        for feat in feats + ['s']:
+        for feat in the_feats + ['s']:
             for direction in [False, True]:
                 every.sort(order=[feat, 'target'])
                 if direction:
@@ -177,7 +188,7 @@ def run():
         every_groups.append(idx) 
 
     is_index = numpy.asarray([(t['target'] < -0.5 or (t[feat] > min_s)) for t in every])
-    every_feats = numpy.asarray([t[feats] for t in every]).view('float32').reshape((-1, len(feats)))
+    every_feats = numpy.asarray([t[the_feats] for t in every]).view('float32').reshape((-1, len(the_feats)))
     every_labs = numpy.asarray([1 if t['target'] > 0.5 else -1 for t in every])
 
     n_folds = 10
@@ -193,7 +204,7 @@ def run():
         train_labs = every_labs[train_idxs][is_index[train_idxs]]
 
         blackboard.LOG.debug("Fold {}: Train".format(i+1))
-        rf = ensemble.RandomForestClassifier(n_jobs=-1)
+        rf = ensemble.RandomForestClassifier(n_jobs=8)
         scaler = preprocessing.StandardScaler()
         scaler.fit(train_feats)
 
@@ -214,31 +225,8 @@ def run():
 
     blackboard.LOG.debug("Done")
 
-    keys = numpy.unique(every['title'])
-    grouped_data = {k: [] for k in keys}
-    data = []
-    for i in range(len(every)):
-        grouped_data[every[i]['title']].append((out_transformed[i], every[i]['title'], every[i]['seq'], every[i]['target'], every[i]['gt']))
-    for g in grouped_data:
-        data.append(grouped_data[g][numpy.argmax([gg[0] for gg in grouped_data[g]])])
-    data = numpy.asarray(data, dtype=[('s', numpy.float32), ('title', object), ('seq', object), ('target', numpy.int32), ('gt', numpy.int32)])
-    data.sort(order=['s', 'target'])
-    data = data[::-1]
-
-    fdrs = numpy.asarray(pepid_utils.calc_qval(data['s'], data['target'] > 0))
-    aw = numpy.argwhere(fdrs <= 0.01)
-    min_st = data['s'][min(len(data)-1, aw.reshape((-1,))[-1]+1)] if len(aw) > 0 else data['s'].max()+1
-    blackboard.LOG.debug("FDRS/target: {} {}".format(fdrs[0], fdrs[-1]))
-
-    fdrs = numpy.asarray(pepid_utils.calc_qval(data['s'], data['gt'] > 0))
-    aw = numpy.argwhere(fdrs <= 0.01)
-    min_sgt = data['s'][min(len(data)-1, aw.reshape((-1,))[-1]+1)] if len(aw) > 0 else data['s'].max()+1
-
-    blackboard.LOG.info("Identified past 1% FDR: {}".format((data['s'] > min_st).sum()))
-    blackboard.LOG.info("Identified past 1% FDP: {}".format((data['s'] > min_sgt).sum()))
-
-    pickle.dump(best_model, open(blackboard.here("ml/rescorer_rf.pkl"), "wb"))
-    pickle.dump(scaler, open(blackboard.here("ml/rescorer_preproc.pkl"), "wb"))
+    # we save the feats in order so we can correctly reorder feats and check if they're really present at load time... while the rescorer is very specific, this should give slightly more flexibility.
+    pickle.dump({'model': best_model, 'scaler': scaler, 'feats': the_feats}, open(blackboard.here("ml/rescorer_rf.pkl"), "wb"))
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -250,4 +238,4 @@ if __name__ == '__main__':
 
     blackboard.setup_constants()
 
-    run()
+    run(sys.argv[1])

@@ -118,7 +118,7 @@ class hyperscore(object):
                             #'xcorr': xcorr,
                             'expMass': float(q['mass']),
                             'calcMass': float(c['mass']),
-                    'score': float(score), 'sumI': float(logsumI), 'total_matched': int(total_matched), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+                    'score': float(score), 'sumI': float(logsumI), 'total_matched': int(total_matched), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], msgpack.loads(c['mods']))])})
         return ret
 
 @numba.njit(locals={'spectrum': numba.float32[:,::1], 'theoretical': numba.float32[:,:,::1], 'acc': numba.float32, 'delta': numba.float32, 'series_count': numba.int32, 'norm': numba.float32, 'spec_idx': numba.int32})
@@ -279,7 +279,7 @@ class xcorr(object):
                                 #'xcorr': xcorr,
                                 'expMass': float(q['mass']),
                                 'calcMass': float(c['mass']),
-                                'score': float(score), 'sumI': float(sumI), 'total_matched': int(n_matches), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], c['mods'])])})
+                                'score': float(score), 'sumI': float(sumI), 'total_matched': int(n_matches), 'title': q['title'], 'desc': c['desc'], 'seq': c['seq'], 'modseq': "".join([s if m == 0 else s + "[{}]".format(m) for s, m in zip(c['seq'], msgpack.loads(c['mods']))])})
         return ret
 
 @numba.njit(locals={'scale': numba.int32, 'i': numba.int32, 'bins': numba.float32[::1]})

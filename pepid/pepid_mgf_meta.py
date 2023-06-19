@@ -2,6 +2,7 @@ import os
 import numpy
 import time
 import pickle
+import msgpack
 import sqlite3
 
 # This is an example script to show how a 'multistaged' pepid operation mode might work.
@@ -11,7 +12,7 @@ import sqlite3
 # This operation mode was used to generate some fdp measures for pepid validation with great success.
 
 if __package__ is None or __package__ == '':
-    import blackboard
+    from pepid import blackboard
 else:
     from . import blackboard
 
@@ -70,11 +71,11 @@ def insert_mgf_field(cfg, key):
 
         for query in queries:
             query = dict(query)
-            extra = msgpack.loads(query['meta'])
+            extra = pickle.loads(query['meta'])
             if extra is None:
                 extra = {}
             extra['mgf:' + key] = mgf[query['title']]
-            ret.append({'rowid': query['rowid'], 'data': msgpack.dumps(extra)})
+            ret.append({'rowid': query['rowid'], 'data': pickle.dumps(extra)})
 
         update_cur.executemany("UPDATE queries SET meta=:data WHERE rowid=:rowid;", ret)
         conn.commit()

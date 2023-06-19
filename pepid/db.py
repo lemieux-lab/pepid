@@ -78,13 +78,13 @@ def pred_rt(cands):
 
 MODEL = None
 class post_ml_spectrum(object):
-    required_fields = {'candidates': ['seq', 'mods', 'meta']}
+    required_fields = {'candidates': ['seq', 'mods']}
 
     def __new__(cls, cands):
         if __package__ is None or __package__ == '':
-            from ml import specgen
+            from ml import specgen2 as specgen
         else:
-            from .ml import specgen
+            from .ml import specgen2 as specgen
         import torch
 
         batch_size = blackboard.config['processing.db.post_ml_spectrum'].getint('batch size')
@@ -104,17 +104,15 @@ class post_ml_spectrum(object):
 
         if MODEL is None:
             MODEL = specgen.Model().eval().to(device)
-            MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen.pkl"), map_location=device))
+            MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen2.pkl"), map_location=device))
 
         cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
         nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
 
-        seqs = []
-        mods = []
+        payloads = []
         for c in cands:
-            seqs.append(c['seq'])
-            mods.append(c['mods'])
-        embs = torch.FloatTensor(specgen.make_inputs(seqs, mods))
+            payloads.append({'pep': c['seq'], 'mods': msgpack.loads(c['mods']), 'mass': pepid_utils.neutral_mass(c['seq'], c['mods'], nterm, cterm, z=1)})
+        embs = torch.FloatTensor(specgen.embed_all(payloads))
 
         max_peaks = 2000
         out = [None for _ in range(len(embs))]

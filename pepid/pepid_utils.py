@@ -142,7 +142,8 @@ def dense_to_sparse(spec, n_max=2000):
     ret = numpy.zeros((spec.shape[0], n_max, 2), dtype='float32')
     for i in range(spec.shape[0]):
         nz = numpy.nonzero(spec[i])[0][:n_max]
-        ret[i,:len(nz),:] = numpy.asarray(list(zip(nz, spec[i][nz])), dtype='float32')
+        if len(nz) > 0:
+            ret[i,:len(nz),:] = numpy.asarray(list(zip(nz, spec[i][nz])), dtype='float32')
     return ret
 
 @numba.njit()
@@ -156,8 +157,6 @@ def sparse_to_dense(spec, n_max=50000):
 def blit_spectrum(spec, size, mult):
     spec_raw = numpy.zeros((size,), dtype='float32')
     for mz, intens in spec:
-        if mz == 0:
-            break
         idx = int(numpy.round(mz / mult))
         if idx >= size:
             break
@@ -173,6 +172,8 @@ def generate_pin_header(header, line):
 
     extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
     use_extra = blackboard.config['misc.tsv_to_pin'].getboolean('use extra')
+    if extra_fn.strip() == '':
+        extra_fn = None
     if extra_fn is not None:
         extra_fn = import_or(extra_fn, None)
 

@@ -37,10 +37,8 @@ INP_SIZE = SEQ_SIZE+2
 def make_inputs(seqs, seqmods):
     th_spec = numpy.zeros((len(seqs), PROT_TGT_LEN, 5+1), dtype='float32')
     for i, (seq, mods) in enumerate(zip(seqs, seqmods)):
-        all_masses = []
-
         for z in range(1, 6):
-            masses = numpy.asarray(pepid_utils.theoretical_masses(seq, mods, nterm=NTERM, cterm=CTERM, exclude_end=True), dtype='float32').reshape((-1,2))
+            masses = numpy.asarray(pepid_utils.theoretical_masses(seq, mods, nterm=NTERM, cterm=CTERM, charge=z, exclude_end=True), dtype='float32').reshape((-1,2))
             th_spec[i,:,z-1] = pepid_utils.blit_spectrum(masses, PROT_TGT_LEN, 1.0 / SIZE_RESOLUTION_FACTOR)
 
         mass = pepid_utils.neutral_mass(seq, mods, nterm=NTERM, cterm=CTERM, z=1)
@@ -53,9 +51,8 @@ def make_input(seq, mods):
 
 @numba.njit()
 def prepare_spec(spec):
-    spec_fwd = pepid_utils.blit_spectrum(spec, PROT_TGT_LEN, 1. / SIZE_RESOLUTION_FACTOR)
+    spec_fwd = pepid_utils.blit_spectrum(spec, PROT_TGT_LEN, 1.0 / SIZE_RESOLUTION_FACTOR)
     spec_fwd = numpy.sqrt(spec_fwd)
-
     return spec_fwd
 
 def embed(inp, mass_scale = 5000):
