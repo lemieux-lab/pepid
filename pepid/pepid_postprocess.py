@@ -5,8 +5,8 @@ import math
 import struct
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_mp
+    from pepid import blackboard
+    from pepid import pepid_mp
 else:
     from . import blackboard
     from . import pepid_mp

@@ -22,6 +22,21 @@ else:
 def run(cfg_file):
     log_level = blackboard.config['logging']['level'].lower()
     if blackboard.config['misc.tsv_to_pin'].getboolean('enabled'):
+        in_fname = blackboard.config['data']['output']
+        fname, fext = in_fname.rsplit('.', 1)
+        suffix = blackboard.config['rescoring']['suffix']
+        pin_name = fname + suffix + "_pin.tsv"
+
+        fin = open(in_fname, 'r')
+        header = next(fin).strip().split('\t')
+        first = next(fin).strip().split('\t')
+        fin.close()
+
+        header = pepid_utils.generate_pin_header(header, first)
+        fpin = open(pin_name, 'w')
+        fpin.write("\t".join(header) + "\n")
+        fpin.close()
+ 
         nworkers = blackboard.config['rescoring.finetune_rf'].getint('pin workers')
         batch_size = blackboard.config['rescoring.finetune_rf'].getint('pin batch size')
         n_total = queries.count_queries()
@@ -31,7 +46,7 @@ def run(cfg_file):
                         [struct.pack("!cQQc", bytes([0x01]), b * batch_size, min((b+1) * batch_size, n_total), "$".encode("utf-8")) for b in range(n_batches)],
                         [struct.pack("!cc", bytes([0x7f]), "$".encode("utf-8")) for _ in range(nworkers)])]
 
-        pepid_mp.handle_nodes("PIN Generation", spec, cfg_file=cfg_file, disable=log_level in ['fatal', 'error', 'warning'])
+        pepid_mp.handle_nodes("PIN Generation", spec, cfg_file=cfg_file, tqdm_silence=log_level in ['fatal', 'error', 'warning'])
 
     in_fname = blackboard.config['data']['output']
     fname, fext = in_fname.rsplit('.', 1)
@@ -111,10 +126,20 @@ def run(cfg_file):
     best_feat = 's'
     best_score = 0
 
+    n_jobs = blackboard.config['rescoring.finetune_rf']['workers'].strip()
+    if n_jobs == '':
+        n_jobs = -1
+    else:
+        n_jobs = blackboard.config['rescoring.finetune_rf'].getint('workers')
+
     feat_ipt = blackboard.config['rescoring.finetune_rf']['score']
     if feat_ipt == '':
         feat_ipt = None
-    feat_dir = blackboard.config['rescoring.finetune_rf'].getboolean('descending')
+    feat_dir = blackboard.config['rescoring.finetune_rf']['descending'].strip()
+    if feat_dir == '':
+        feat_dir = None
+    else:
+        feat_dir = blackboard.config['rescoring.finetune_rf'].getboolean('descending')
 
     if feat_ipt is None:
         for feat in the_feats + ['s']:
@@ -204,19 +229,26 @@ def run(cfg_file):
         train_labs = every_labs[train_idxs][is_index[train_idxs]]
 
         blackboard.LOG.debug("Fold {}: Train".format(i+1))
-        rf = ensemble.RandomForestClassifier(n_jobs=8)
+        rf = ensemble.RandomForestClassifier(n_jobs=n_jobs)
         scaler = preprocessing.StandardScaler()
         scaler.fit(train_feats)
 
-        rf.fit(scaler.transform(every_feats[train_idxs]), [1 if t['gt'] > 0.5 else 0 for t in every[train_idxs]])
+        labs = numpy.asarray([1 if t['gt'] > 0.5 else 0 for t in every[train_idxs]])
+        assert ((1 in labs) and (0 in labs))
+        rf.fit(scaler.transform(every_feats[train_idxs]), labs)
 
         blackboard.LOG.debug("Fold {}: Test".format(i+1))
         test_feats = every_feats[test_idxs]
-        test_out = numpy.asarray(rf.predict_proba(scaler.transform(test_feats))[:,1])
+        preds = rf.predict_proba(scaler.transform(test_feats))
+        test_out = numpy.asarray(preds[:,1])
 
         fdrs = numpy.asarray(pepid_utils.calc_qval(test_out, every[test_idxs]['gt'] > 0.5))
         aw = numpy.argwhere(fdrs <= 0.01)
-        min_idx = aw.reshape((-1,))[-1]
+        min_idx = aw.reshape((-1,))
+        if len(min_idx) > 0:
+            min_idx = min_idx[-1]
+        else:
+            min_idx = -1
 
         if min_idx > best_idx:
             best_model = rf

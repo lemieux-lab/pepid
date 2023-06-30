@@ -5,8 +5,8 @@ import pickle
 import sys
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_utils
+    from pepid import blackboard
+    from pepid import pepid_utils
 else:
     from . import blackboard
     from . import pepid_utils
@@ -38,7 +38,8 @@ def specgen_features(header, lines):
     qfile = blackboard.DB_PATH + "_q.sqlite"
 
     if __package__ is None or __package__ == '':
-        from ml import specgen
+        import pepid
+        from pepid.ml import specgen
     else:
         from .ml import specgen
 
@@ -92,7 +93,8 @@ class predict_length(object):
         import torch
 
         if __package__ is None or __package__ == '':
-            from ml import best_lgt_model as length_model
+            import pepid
+            from pepid.ml import best_lgt_model as length_model
         else:
             from .ml import best_lgt_model as length_model
 
@@ -143,7 +145,8 @@ def postprocess_for_length(start, end):
     import sqlite3
 
     if __package__ is None or __package__ == '':
-        from ml import best_lgt_model as length_model
+        import pepid
+        from pepid.ml import best_lgt_model as length_model
     else:
         from .ml import best_lgt_model as length_model
 

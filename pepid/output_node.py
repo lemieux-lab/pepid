@@ -4,8 +4,8 @@ import time
 import sys
 
 if __package__ is None or __package__ == '':
-    import node
-    import blackboard
+    from pepid import node
+    from pepid import blackboard
 else:
     from . import node
     from . import blackboard
@@ -20,7 +20,7 @@ class OutputNode(node.Node):
 
     def do(self, start, end, _):
         if __package__ is None or __package__ == '':
-            import pepid_io
+            from pepid import pepid_io
         else:
             from . import pepid_io
 

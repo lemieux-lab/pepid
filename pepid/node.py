@@ -9,7 +9,7 @@ import numpy
 import tempfile
 
 if __package__ is None or __package__ == '':
-    import blackboard
+    from pepid import blackboard
 else:
     from . import blackboard
 

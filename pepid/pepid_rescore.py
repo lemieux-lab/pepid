@@ -1,8 +1,8 @@
 import sys
 
 if __package__ is None or __package__ == '':
-    import pepid_utils
-    import blackboard
+    from pepid import pepid_utils
+    from pepid import blackboard
 else:
     from . import pepid_utils
     from . import blackboard

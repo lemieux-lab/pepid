@@ -1,4 +1,6 @@
 import numpy
+import importlib
+import sys
 
 AA_TABLE = {
 '_': 999999999.0
@@ -95,12 +97,26 @@ def theoretical_masses(seq, mods, nterm, cterm, charge=1, series="by", exclude_e
     return masses
 
 def import_or(s, default):
+    if s.strip() == '':
+        return default
+
+    modstr = s.rsplit('.', 1)
+
+    if len(modstr) == 1:
+        sys.stderr.write("Invalid callable '{}', using default value instead\n".format(s))
+        return default
+
     try:
-        mod, fn = s.rsplit('.', 1)
-        return getattr(__import__(mod, fromlist=[fn]), fn)
-    except:
-        import sys
-        sys.stderr.write("Could not find '{}', using default value instead\n".format(s))
+        return getattr(__import__(modstr[0], locals(), globals(), fromlist=[modstr[1]]), modstr[1])
+    except ModuleNotFoundError:
+        if __package__ is not None and __package__ != '':
+            try:
+                return getattr(__import__(__package__ + "." + modstr[0], locals(), globals(), fromlist=[modstr[1]]), modstr[1])
+            except:
+                sys.stderr.write("Could not find '{}' locally or in Pepid namespace, using default value instead\n".format(s))
+                return default
+
+        sys.stderr.write("Could not find '{}' locally and no package environment available, using default value instead\n".format(s))
         return default
 
 # Requires (matching) scores and labels (is_target) to be sorted by scores in the appropriate direction (i.e. best first, worst last)
@@ -136,21 +152,23 @@ def calc_qval(scores, is_target):
     return fdrs
 
 import numba
+# Do not use numba, it slows down this version by ~50%
+def dense_to_sparse(spec, n_max=500):
+ ret = numpy.zeros((spec.shape[0], n_max, 2), dtype='float32')
+ for i in range(spec.shape[0]):
+  nz = numpy.sort(numpy.argpartition(-spec[i], n_max)[:n_max])
+  if len(nz) > 0:
+   ret[i,:len(nz),:] = numpy.asarray(list(zip(nz, spec[i][nz])), dtype='float32')
+ return ret
 
 @numba.njit()
-def dense_to_sparse(spec, n_max=2000):
-    ret = numpy.zeros((spec.shape[0], n_max, 2), dtype='float32')
-    for i in range(spec.shape[0]):
-        nz = numpy.nonzero(spec[i])[0][:n_max]
-        if len(nz) > 0:
-            ret[i,:len(nz),:] = numpy.asarray(list(zip(nz, spec[i][nz])), dtype='float32')
-    return ret
-
-@numba.njit()
-def sparse_to_dense(spec, n_max=50000):
+def sparse_to_dense(spec, n_max=20000):
     ret = numpy.zeros((n_max,), dtype='float32')
     for mz, intens in spec:
-        ret[int(mz)] += intens
+        if mz < n_max:
+            ret[int(mz)] += intens
+        else:
+            break
     return ret
 
 @numba.njit(locals={'mult': numba.float32, 'size': numba.int32})
@@ -168,13 +186,16 @@ def blit_spectrum(spec, size, mult):
     return spec_raw
 
 def generate_pin_header(header, line):
-    import blackboard
+    if __package__ is None or __package__ == '':
+        from pepid import blackboard
+    else:
+        from . import blackboard
 
     extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
     use_extra = blackboard.config['misc.tsv_to_pin'].getboolean('use extra')
     if extra_fn.strip() == '':
         extra_fn = None
-    if extra_fn is not None:
+    else:
         extra_fn = import_or(extra_fn, None)
 
     user_extra = None
@@ -195,22 +216,27 @@ def generate_pin_header(header, line):
     if use_extra:
         extras = msgpack.loads(meta['extra'])
         parsed_meta = {**parsed_meta, **extras}
-        if user_extra is not None:
-            parsed_meta = {**parsed_meta, **user_extra}
-        feats = sorted(list(parsed_meta.keys()))
-        if 'score' in feats:
-            feats.append('deltLCn')
+    if user_extra is not None:
+        parsed_meta = {**parsed_meta, **user_extra}
 
-        head = ['PSMId', 'Label', 'ScanNr']
-        if 'expMass' in feats and 'calcMass' in feats:
-            head.extend(['expMass', 'calcMass'])
-        head.extend(feats)
-        head.extend(['Peptide', 'Proteins'])
+    feats = sorted(list(parsed_meta.keys()))
+    if 'score' in feats:
+        feats.append('deltLCn')
 
-        return head
+    head = ['PSMId', 'Label', 'ScanNr']
+    if 'expMass' in feats and 'calcMass' in feats:
+        head.extend(['expMass', 'calcMass'])
+    head.extend(feats)
+    head.extend(['Peptide', 'Proteins'])
+
+    return head
 
 def tsv_to_pin(header, lines, start=0):
-    import blackboard
+    if __package__ == '' or __package__ is None:
+        from pepid import blackboard
+    else:
+        from . import blackboard
+
     import sqlite3
     import os
     import msgpack
@@ -250,8 +276,10 @@ def tsv_to_pin(header, lines, start=0):
     lines = newlines
 
     extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
-    if extra_fn is not None:
+    if extra_fn.strip() != '':
         extra_fn = import_or(extra_fn, None)
+    else:
+        extra_fn = None
 
     user_extra = None
     if extra_fn is not None:
@@ -294,8 +322,6 @@ def tsv_to_pin(header, lines, start=0):
                 extraVals = [m['expMass'], m['calcMass']]
 
             out_lines[-1].append(list(map(str, [qlines[j][title_idx], (1 - qlines[j][desc_idx].startswith(decoy_prefix)) * 2 - 1, start+il, *extraVals])))
-
             out_lines[-1][-1].extend(list(map(lambda k: numpy.format_float_positional(m[k], trim='0', precision=12), feats))) # percolator breaks if too many digits are provided
-
             out_lines[-1][-1].extend(["-." + qlines[j][seq_idx] + ".-", qlines[j][desc_idx]])
     return out_lines

@@ -11,8 +11,8 @@ import msgpack
 import pickle
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_utils
+    from pepid import blackboard
+    from pepid import pepid_utils
 else:
     from . import blackboard
     from . import pepid_utils
@@ -82,9 +82,10 @@ class post_ml_spectrum(object):
 
     def __new__(cls, cands):
         if __package__ is None or __package__ == '':
-            from ml import specgen2 as specgen
+            import pepid
+            from pepid.ml import specgen as specgen
         else:
-            from .ml import specgen2 as specgen
+            from .ml import specgen as specgen
         import torch
 
         batch_size = blackboard.config['processing.db.post_ml_spectrum'].getint('batch size')
@@ -104,7 +105,7 @@ class post_ml_spectrum(object):
 
         if MODEL is None:
             MODEL = specgen.Model().eval().to(device)
-            MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen2.pkl"), map_location=device))
+            MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen.pkl"), map_location=device))
 
         cterm = blackboard.config['processing.db'].getfloat('cterm cleavage')
         nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
@@ -114,15 +115,14 @@ class post_ml_spectrum(object):
             payloads.append({'pep': c['seq'], 'mods': msgpack.loads(c['mods']), 'mass': pepid_utils.neutral_mass(c['seq'], c['mods'], nterm, cterm, z=1)})
         embs = torch.FloatTensor(specgen.embed_all(payloads))
 
-        max_peaks = 2000
+        max_peaks = 500
         out = [None for _ in range(len(embs))]
 
         with torch.no_grad():
             for bidx in range(0, len(embs), batch_size):
-                pred = MODEL(embs[bidx:bidx+batch_size].to(device))
-                sparsy = (pred * (pred >= 1e-3)).detach().cpu().numpy()
-                sparsed = pepid_utils.dense_to_sparse(sparsy.reshape((-1, sparsy.shape[-1])), n_max = max_peaks)
-                sparsed = sparsed.reshape((-1, sparsy.shape[1], sparsed.shape[-2], 2))
+                pred = MODEL(embs[bidx:bidx+batch_size].to(device)).detach().cpu().numpy()
+                sparsed = pepid_utils.dense_to_sparse(pred.reshape((-1, pred.shape[-1])), n_max = max_peaks)
+                sparsed = sparsed.reshape((-1, pred.shape[1], sparsed.shape[-2], 2))
                 out[bidx:bidx+batch_size] = sparsed
 
         if 'cuda' in device:

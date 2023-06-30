@@ -3,7 +3,7 @@ import time
 import os
 
 if __package__ is None or __package__ == '':
-    import blackboard
+    from pepid import blackboard
     from blackboard import here
 else:
     from . import blackboard

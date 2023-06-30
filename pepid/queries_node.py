@@ -3,8 +3,8 @@ import os
 import time
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import node
+    from pepid import blackboard
+    from pepid import node
 else:
     from . import blackboard
     from . import node
@@ -19,7 +19,7 @@ class QueryNode(node.Node):
 
     def do(self, start, end, _):
         if __package__ is None or __package__ == '':
-            import queries
+            from pepid import queries
         else:
             from . import queries
 
@@ -31,7 +31,7 @@ class QueryNode(node.Node):
 
     def do_post(self, start, end, _):
         if __package__ is None or __package__ == '':
-            import queries
+            from pepid import queries
         else:
             from . import queries
 

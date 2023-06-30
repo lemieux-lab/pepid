@@ -4,9 +4,9 @@ import time
 import sys
 
 if __package__ is None or __package__ == '':
-    import node
-    import blackboard
-    import pepid_utils
+    from pepid import node
+    from pepid import blackboard
+    from pepid import pepid_utils
 else:
     from . import node
     from . import blackboard

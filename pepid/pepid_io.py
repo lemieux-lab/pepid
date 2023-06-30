@@ -9,8 +9,8 @@ import glob
 import math
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import queries
+    from pepid import blackboard
+    from pepid import queries
 else:
     from . import blackboard
     from . import queries
@@ -106,7 +106,7 @@ if __name__ == '__main__':
     blackboard.setup_constants()
 
     if __package__ is None or __package__ == '':
-        import pepid_mp 
+        from pepid import pepid_mp 
     else:
         from . import pepid_mp
 

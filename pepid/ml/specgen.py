@@ -1,7 +1,12 @@
-import pepid_utils
-import blackboard
+import pickle
+import msgpack
 
-blackboard.setup_constants()
+if __package__ == "" or __package__ is None:
+    from pepid import pepid_utils
+    from pepid import blackboard
+else:
+    from .. import pepid_utils
+    from .. import blackboard
 
 config = blackboard.config
 
@@ -10,7 +15,6 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
 import numpy
-import numba
 import tables
 
 import tqdm
@@ -26,6 +30,7 @@ PROT_TGT_LEN = MAX_MZ * SIZE_RESOLUTION_FACTOR
 MAX_PEAKS = 2000
 
 AA_LIST = pepid_utils.AMINOS
+AA_STRING = "".join(AA_LIST)
 SEQ_SIZE = len(AA_LIST)
 
 PROT_STR_LEN = 40
@@ -34,20 +39,7 @@ N_MASS_REPS = MAX_CHARGE
 
 INP_SIZE = SEQ_SIZE+2
 
-def make_inputs(seqs, seqmods):
-    th_spec = numpy.zeros((len(seqs), PROT_TGT_LEN, 5+1), dtype='float32')
-    for i, (seq, mods) in enumerate(zip(seqs, seqmods)):
-        for z in range(1, 6):
-            masses = numpy.asarray(pepid_utils.theoretical_masses(seq, mods, nterm=NTERM, cterm=CTERM, charge=z, exclude_end=True), dtype='float32').reshape((-1,2))
-            th_spec[i,:,z-1] = pepid_utils.blit_spectrum(masses, PROT_TGT_LEN, 1.0 / SIZE_RESOLUTION_FACTOR)
-
-        mass = pepid_utils.neutral_mass(seq, mods, nterm=NTERM, cterm=CTERM, z=1)
-        th_spec[i,min(PROT_TGT_LEN-1, int(numpy.round(mass * SIZE_RESOLUTION_FACTOR))),5] = 1
-
-    return th_spec
-
-def make_input(seq, mods):
-    return make_inputs([seq], [mods])[0]
+import numba
 
 @numba.njit()
 def prepare_spec(spec):
@@ -55,50 +47,75 @@ def prepare_spec(spec):
     spec_fwd = numpy.sqrt(spec_fwd)
     return spec_fwd
 
-def embed(inp, mass_scale = 5000):
+@numba.njit(locals={'i': numba.int32, 'indexed': numba.int32})
+def embed(pep, mods, mass, mass_scale = MAX_MZ):
+# Input is {"pep": peptide, 'mods': mods, "mass": precursor mass}
     emb = numpy.zeros((PROT_STR_LEN + 1, INP_SIZE), dtype='float32')
 
-    pep = inp['pep']
-
-    for i in range(len(pep), PROT_STR_LEN): emb[i,pepid_utils.AMINOS.index("_")] = 1. # padding first, meta column should not be affected
+    for i in range(len(pep), PROT_STR_LEN, 1):
+        indexed = AA_STRING.index("_")
+        emb[i][indexed] = 1. # padding first, meta column should not be affected
     meta = emb[:,SEQ_SIZE:]
-    meta[:,0] = pepid_utils.neutral_mass(inp['pep'], inp['mods'], NTERM, CTERM, z=1) / mass_scale
+    meta[:,0] = mass / mass_scale
     for i in range(len(pep)):
-        emb[i,pepid_utils.AMINOS.index(pep[i])] = 1.
-        emb[i,SEQ_SIZE+1] = inp['mods'][i]
+        indexed = AA_STRING.index(pep[i])
+        emb[i][indexed] = 1.
+        emb[i][SEQ_SIZE+1] = mods[i]
 
     return emb
+
+def embed_all(inp, mass_scale = MAX_MZ):
+    ret = numpy.zeros((len(inp), PROT_STR_LEN+1, INP_SIZE), dtype='float32')
+    for i in range(len(inp)):
+        ret[i] = embed(inp[i]['pep'], numpy.asarray(inp[i]['mods'], dtype='float32'), float(inp[i]['mass']), mass_scale=float(mass_scale))
+    return ret
+
+EMB_DIM = 1024
+
+class Res(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv1d(EMB_DIM, EMB_DIM, kernel_size=1, padding='same')
+        self.bn = nn.BatchNorm1d(EMB_DIM, momentum=0.01, eps=1e-3, affine=True, track_running_stats=False)
+        self.nl = nn.ReLU()
+
+    def forward(self, x):
+        out = self.bn(self.conv(x))
+        return self.nl(x + out)
 
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
 
-        self.emb_size = 8
+        self.emb_size = EMB_DIM
 
-        self.enc = nn.Conv1d(5+1+1, self.emb_size, kernel_size=100+1, padding='same')
+        self.enc = nn.Conv1d(INP_SIZE+1, self.emb_size, kernel_size=PROT_STR_LEN+1, padding='same')
         self.enc_bn = nn.BatchNorm1d(self.emb_size, momentum=0.01, eps=1e-3, affine=True, track_running_stats=False)
         self.enc_nl = nn.ReLU()
 
         self.processors = []
-        for _ in range(4):
-            self.processors.append(nn.Conv1d(self.emb_size, self.emb_size, kernel_size=14+1, padding='same'))
-            self.processors.append(nn.BatchNorm1d(self.emb_size, momentum=0.01, eps=1e-3, affine=True, track_running_stats=False))
-            self.processors.append(nn.ReLU())
+        for _ in range(5):
+            self.processors.append(Res())
+
         self.processors = nn.ModuleList(self.processors)
 
-        self.decoder = nn.Conv1d(self.emb_size, 5, kernel_size=100+1, padding='same')
+        self.decoders = []
+        for _ in range(MAX_CHARGE):
+            self.decoders.append(nn.Conv1d(self.emb_size, PROT_TGT_LEN, kernel_size=1, padding='same'))
+
+        self.decoders = nn.ModuleList(self.decoders)
         self.dec_nl = nn.Sigmoid()
+        self.dec_pool = nn.AvgPool1d(PROT_STR_LEN)
 
     def forward(self, inp):
-        inp = torch.cat([inp, torch.arange(inp.shape[1]).to('cuda:0').reshape((1, -1, 1)).repeat(inp.shape[0], 1, 1) / inp.shape[1]], dim=-1)
+        inp = torch.cat([inp, (torch.arange(inp.shape[1]) / inp.shape[1]).to(inp.device).view(1, -1, 1).repeat(inp.shape[0], 1, 1)], dim=-1)
         inp = inp.transpose(1, 2)
-        this_hid = self.enc_nl(self.enc_bn(self.enc(inp))).transpose(1, 2)
-        this_hid = this_hid.transpose(1, 2)
+        this_hid = self.enc_nl(self.enc_bn(self.enc(inp)))
 
         for i, l in enumerate(self.processors):
             this_hid = l(this_hid)
 
-        ret = self.dec_nl(self.decoder(this_hid))
+        ret = torch.stack([(self.dec_pool(self.dec_nl(decoder(this_hid)))).view(this_hid.shape[0], -1) for decoder in self.decoders]).transpose(0, 1)
 
         return ret
 

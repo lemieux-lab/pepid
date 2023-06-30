@@ -8,8 +8,8 @@ import msgpack
 import pickle
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_utils
+    from pepid import blackboard
+    from pepid import pepid_utils
 else:
     from . import blackboard
     from . import pepid_utils

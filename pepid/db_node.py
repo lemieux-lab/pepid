@@ -3,8 +3,8 @@ import os
 import time
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import node
+    from pepid import blackboard
+    from pepid import node
 else:
     from . import blackboard
     from . import node
@@ -20,7 +20,7 @@ class DbNode(node.Node):
     def do(self, msg):
         start, end = struct.unpack("!QQ", msg[:16])
         if __package__ is None or __package__ == '':
-            import db
+            from pepid import db
         else:
             from . import db
         if not self.path:
@@ -33,7 +33,7 @@ class DbNode(node.Node):
 
     def do_post(self, start, end, _):
         if __package__ is None or __package__ == '':
-            import db
+            from pepid import db
         else:
             from . import db
         db.user_processing(start, end)

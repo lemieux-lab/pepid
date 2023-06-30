@@ -4,8 +4,8 @@ import time
 import sys
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import node
+    from pepid import blackboard
+    from pepid import node
 else:
     from . import blackboard
     from . import node
@@ -20,7 +20,7 @@ class SearchNode(node.Node):
 
     def do(self, start, end, _):
         if __package__ is None or __package__ == '':
-            import search
+            from pepid import search
         else:
             from . import search
 

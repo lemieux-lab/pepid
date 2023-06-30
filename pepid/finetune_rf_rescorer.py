@@ -7,10 +7,10 @@ import tqdm
 import struct
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_utils
-    import queries
-    import pepid_mp
+    from pepid import blackboard
+    from pepid import pepid_utils
+    from pepid import queries
+    from pepid import pepid_mp
 else:
     from . import blackboard
     from . import pepid_utils
@@ -54,28 +54,33 @@ def run(cfg):
     suffix = blackboard.config['rescoring']['suffix']
     pin_fname = fname + suffix + "_pin.tsv"
 
-    model_path = blackboard.config['rescoring.finetune_rf']['model']
-    preprocessor_path = blackboard.config['rescoring.finetune_rf']['preprocessor']
+    n_jobs = blackboard.config['rescoring.finetune_rf']['workers'].strip()
+    if n_jobs == '':
+        n_jobs = -1
+    else:
+        n_jobs = blackboard.config['rescoring.finetune_rf'].getint('workers')
 
+    model_path = blackboard.config['rescoring.finetune_rf']['model']
     model = pickle.load(open(blackboard.here(model_path), "rb"))
-    scaler = pickle.load(open(blackboard.here(preprocessor_path), "rb"))
 
     f = open(pin_fname, 'r')
     header = next(f).strip().split("\t")
     feats = header
 
-    f.close()
+    feats = [f for f in model['feats'] if f in header]
+    if any([x != y for x, y in zip(feats, model['feats'])]) or len(feats) != len(model['feats']):
+        blackboard.LOG.fatal("Incompatible features between model ({}) and pin file ({})".format(", ".join(model['feats']), ", ".join(header)))
+        sys.exit(-2)
 
-    template = blackboard.pin_template()
-    feats = [x for x in feats if x not in template]
+    f.close()
 
     import glob
 
     data = []
 
     import sqlite3
-    connq = sqlite3.connect("/scratch/zumerj/tmp/pepidrun_yeast/human_q.sqlite", detect_types=1)
-    connc = sqlite3.connect("/scratch/zumerj/tmp/pepidrun_yeast/human_cands.sqlite", detect_types=1)
+    connq = sqlite3.connect(blackboard.DB_PATH + "_q.sqlite", detect_types=1)
+    connc = sqlite3.connect(blackboard.DB_PATH + "_cands.sqlite", detect_types=1)
     connq.row_factory = sqlite3.Row
     connc.row_factory = sqlite3.Row
     curq = connq.cursor()
@@ -111,8 +116,14 @@ def run(cfg):
     best_feat = 's'
     best_score = 0
 
-    feat_ipt = blackboard.config['rescoring.finetune_rf']['score']
-    feat_dir = blackboard.config['rescoring.finetune_rf'].getboolean('descending')
+    feat_ipt = blackboard.config['rescoring.finetune_rf']['score'].strip()
+    feat_dir = blackboard.config['rescoring.finetune_rf']['descending'].strip()
+    if feat_dir == '':
+        feat_dir = None
+    else:
+        feat_dir = blackboard.config['rescoring.finetune_rf'].getboolean('descending')
+    if feat_ipt == '':
+        feat_ipt = None
 
     if feat_ipt is None:
         for feat in feats + ['s']:
@@ -123,7 +134,7 @@ def run(cfg):
 
                 fdrs = numpy.asarray(pepid_utils.calc_qval(every[feat], every['target'] > 0))
                 aw = numpy.argwhere(fdrs <= 0.01)
-                min_s = every[feat][(aw.reshape((-1,))[-1])+1] if len(aw) > 0 else (every[feat].max()+1) if direction else (every[feat].min()-1)
+                min_s = every[feat][(aw.reshape((-1,))[-1])] if len(aw) > 0 else (every[feat].max()+1) if direction else (every[feat].min()-1)
 
                 score = (every[feat] > min_s).sum() if direction else (every[feat] < min_s).sum()
                 if score > best_score:
@@ -133,7 +144,7 @@ def run(cfg):
                 blackboard.LOG.debug("[{}|{}] Identified past 1% FDR: {}".format(feat, ("+" if direction else "-"), score))
     else:
         best_feat = feat_ipt
-        direction = feat_dir
+        best_dir = feat_dir
 
     feat = best_feat
     direction = best_dir
@@ -146,7 +157,7 @@ def run(cfg):
 
     fdrs = numpy.asarray(pepid_utils.calc_qval(every[feat], every['target'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
-    min_s = every[feat][aw.reshape((-1,))[-1]+1] if len(aw) > 0 else every[feat].max()+1
+    min_s = every[feat][aw.reshape((-1,))[-1]] if len(aw) > 0 else every[feat].max()+1
 
     keys = numpy.unique(every['title'])
     grouped_data = {k: [] for k in keys}
@@ -161,7 +172,7 @@ def run(cfg):
 
     fdrs = numpy.asarray(pepid_utils.calc_qval(data[feat], data['target'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
-    min_st = data[feat][aw.reshape((-1,))[-1]+1] if len(aw) > 0 else data[feat].max()+1
+    min_st = data[feat][aw.reshape((-1,))[-1]] if len(aw) > 0 else data[feat].max()+1
 
     blackboard.LOG.info("Total: {}".format(len(every)))
     blackboard.LOG.info("[{}] Identified past 1% FDR: {}".format(feat, (every[feat] > min_s).sum()))
@@ -171,7 +182,7 @@ def run(cfg):
 
     fdrs = numpy.asarray(pepid_utils.calc_qval(every[feat], every['target'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
-    min_s = every[feat][aw.reshape((-1,))[-1]+1] if len(aw) > 0 else every[feat].max()+1
+    min_s = every[feat][aw.reshape((-1,))[-1]] if len(aw) > 0 else every[feat].max()+1
 
     lvl = every[int(0.5 * len(every))][feat]
 
@@ -198,9 +209,9 @@ def run(cfg):
         train_labs = every_labs[train_idxs] #[is_index[train_idxs]]
 
         blackboard.LOG.debug("Fold {}: Train".format(i+1))
-        rf_gt = model
-        rf_finetune = ensemble.RandomForestClassifier(n_jobs=-1)
-        scaler = scaler
+        rf_gt = model['model']
+        rf_finetune = ensemble.RandomForestClassifier(n_jobs=n_jobs)
+        scaler = model['scaler']
 
         train_labs = [1 if (t[feat] >= lvl and t['target'] > 0.5) else 0 for t in every[train_idxs]]
 
@@ -232,7 +243,7 @@ def run(cfg):
 
     fdrs = numpy.asarray(pepid_utils.calc_qval(data['s'], data['target'] > 0))
     aw = numpy.argwhere(fdrs <= 0.01)
-    min_st = data['s'][min(len(data)-1, aw.reshape((-1,))[-1]+1)] if len(aw) > 0 else data['s'].max()+1
+    min_st = data['s'][min(len(data)-1, aw.reshape((-1,))[-1])] if len(aw) > 0 else data['s'].max()+1
     blackboard.LOG.debug("FDRS/target: {} {}".format(fdrs[0], fdrs[-1]))
 
     blackboard.LOG.info("Identified past 1% FDR: {}".format((data['s'] > min_st).sum()))

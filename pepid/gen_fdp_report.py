@@ -6,7 +6,7 @@ import math
 import sqlite3
 
 if __package__ is None or __package__ == '':
-    import pepid_utils
+    from pepid import pepid_utils
 else:
     from . import pepid_utils
 
@@ -17,7 +17,7 @@ else:
 # the outputs into one payload, which will affect how metadata postprocessing functions are handled.
 
 if __package__ is None or __package__ == '':
-    import blackboard
+    from pepid import blackboard
 else:
     from . import blackboard
 
@@ -134,10 +134,10 @@ def tda_fdr(rescored=False):
 
     fdr_limit = float(blackboard.config['report']['fdr threshold'])
     aw = numpy.argwhere(fdrs <= fdr_limit)
-    idx = min(len(data)-1, aw.reshape((-1,))[-1]+1) if len(aw) > 0 else -1
+    idx = min(len(data)-1, aw.reshape((-1,))[-1]) if len(aw) > 0 else -1
 
-    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] > data['score'][idx]).sum() if idx >= 0 else 0))
-    blackboard.LOG.info("Unique peps@{}%: {}".format(int(fdr_limit * 100.), len(numpy.unique(data[(data['score'] > data['score'][idx])]['seq'])) if idx >= 0 else 0))
+    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] >= data['score'][idx]).sum() if idx >= 0 else 0))
+    blackboard.LOG.info("Unique peps@{}%: {}".format(int(fdr_limit * 100.), len(numpy.unique(data[(data['score'] >= data['score'][idx])]['modseq'])) if idx >= 0 else 0))
 
     ufdrs = numpy.unique(fdrs)
     levels = []

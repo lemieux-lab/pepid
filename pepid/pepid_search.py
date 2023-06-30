@@ -5,8 +5,8 @@ import pickle
 import glob
 
 if __package__ is None:
-    import blackboard
-    import pepid_mp
+    from pepid import blackboard
+    from pepid import pepid_mp
 else:
     from . import blackboard
     from . import pepid_mp
@@ -23,9 +23,9 @@ def run(cfg_file):
     """
 
     if __package__ is None:
-        import queries
-        import db
-        import search
+        from pepid import queries
+        from pepid import db
+        from pepid import search
     else:
         from . import queries
         from . import db

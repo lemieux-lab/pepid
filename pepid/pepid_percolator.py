@@ -8,9 +8,9 @@ import msgpack
 import pepid_utils
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_mp
-    import queries
+    from pepid import blackboard
+    from pepid import pepid_mp
+    from pepid import queries
 else:
     from . import blackboard
     from . import pepid_mp
@@ -61,7 +61,7 @@ def count_lines(f):
 
 def rescore(cfg_file):
     if __package__ is None or __package__ == '':
-        import blackboard
+        from pepid import blackboard
     else:
         from . import blackboard
     import sys

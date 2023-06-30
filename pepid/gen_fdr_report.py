@@ -5,8 +5,8 @@ import tqdm
 import math
 
 if __package__ is None or __package__ == '':
-    import blackboard
-    import pepid_utils
+    from pepid import blackboard
+    from pepid import pepid_utils
 else:
     from . import blackboard
     from . import pepid_utils
@@ -59,7 +59,7 @@ def tda_fdr(rescored=False):
                     del staged
                     staged = []
             if not math.isinf(score):
-                staged.append((title, seq, score, desc.startswith(decoy_prefix), qrow, candrow, len(seq), charge, mass))
+                staged.append((title, modseq, score, desc.startswith(decoy_prefix), qrow, candrow, len(seq), charge, mass))
 
     idxs = numpy.argsort([s[2] for s in staged])[::-1]
     for n, idx in enumerate(idxs):
@@ -99,10 +99,10 @@ def tda_fdr(rescored=False):
 
     fdr_limit = float(blackboard.config['report']['fdr threshold'])
     aw = numpy.argwhere(fdrs <= fdr_limit)
-    idx = min(len(data)-1, aw.reshape((-1,))[-1]+1) if len(aw) > 0 else -1
+    idx = min(len(data)-1, aw.reshape((-1,))[-1]) if len(aw) > 0 else -1
 
-    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] > data['score'][idx]).sum() if idx >= 0 else 0))
-    blackboard.LOG.info("Unique peps@{}%: {}".format(int(fdr_limit * 100.), len(numpy.unique(data[(data['score'] > data['score'][idx])]['seq'])) if idx >= 0 else 0))
+    blackboard.LOG.info("Overall FDR: {}; FDR range: {}-{}; PSM@{}%: {}".format(fdr, fdrs[0], fdrs[-1], int(fdr_limit * 100.), (data['score'] >= data['score'][idx]).sum() if idx >= 0 else 0))
+    blackboard.LOG.info("Unique peps@{}%: {}".format(int(fdr_limit * 100.), len(numpy.unique(data[(data['score'] >= data['score'][idx])]['seq'])) if idx >= 0 else 0))
 
     ufdrs = numpy.unique(fdrs)
     levels = []
