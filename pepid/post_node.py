@@ -21,7 +21,7 @@ class PostNode(node.Node):
     def do(self, msg):
         start, end = struct.unpack("!QQ", msg[:16])
 
-        post_fn = pepid_utils.import_or(blackboard.config['postsearch']['function'], None)
+        post_fn = pepid_utils.import_or(blackboard.config['postsearch']['function'].strip(), None)
 
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")

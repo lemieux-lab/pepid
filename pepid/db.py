@@ -177,9 +177,9 @@ def user_processing(start, end):
     cur = blackboard.CONN.cursor()
     max_charge = blackboard.config['processing.db'].getint('max charge')
 
-    rt_fn = pepid_utils.import_or(blackboard.config['processing.db']['rt function'], pred_rt)
-    spec_fn = pepid_utils.import_or(blackboard.config['processing.db']['spectrum function'], theoretical_spectrum)
-    user_fn = pepid_utils.import_or(blackboard.config['processing.db']['postprocessing function'], stub)
+    rt_fn = pepid_utils.import_or(blackboard.config['processing.db']['rt function'].strip(), pred_rt)
+    spec_fn = pepid_utils.import_or(blackboard.config['processing.db']['spectrum function'].strip(), theoretical_spectrum)
+    user_fn = pepid_utils.import_or(blackboard.config['processing.db']['postprocessing function'].strip(), stub)
 
     rows = set()
     rows.add('rowid')
@@ -300,9 +300,9 @@ def fill_db(start, end, seq_type):
     batch_size = blackboard.config['processing.db'].getint('batch size')
     input_file = open(blackboard.config['data']['database'])
     if seq_type == 'decoy':
-        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['decoy protein processing function'], process_entry_decoy)
+        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['decoy protein processing function'].strip(), process_entry_decoy)
     else:
-        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['protein processing function'], process_entry)
+        process_protein_fn = pepid_utils.import_or(blackboard.config['processing.db']['protein processing function'].strip(), process_entry)
 
     settings = DbSettings()
     settings.load_settings()

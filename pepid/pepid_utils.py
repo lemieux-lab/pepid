@@ -191,12 +191,9 @@ def generate_pin_header(header, line):
     else:
         from . import blackboard
 
-    extra_fn = blackboard.config['misc.tsv_to_pin']['user function']
+    extra_fn = blackboard.config['misc.tsv_to_pin']['user function'].strip()
     use_extra = blackboard.config['misc.tsv_to_pin'].getboolean('use extra')
-    if extra_fn.strip() == '':
-        extra_fn = None
-    else:
-        extra_fn = import_or(extra_fn, None)
+    extra_fn = import_or(extra_fn, None)
 
     user_extra = None
     if extra_fn is not None:
@@ -212,12 +209,24 @@ def generate_pin_header(header, line):
     cur.execute("SELECT rrow, data, extra FROM meta LIMIT 1;")
     meta = cur.fetchone()
 
-    parsed_meta = {k: v for k, v in msgpack.loads(meta['data']).items() if type(v) != str}
+    the_meta = msgpack.loads(meta['data'])
+    parsed_meta = None
+    if the_meta is not None:
+        parsed_meta = {k: v for k, v in the_meta.items() if type(v) != str}
     if use_extra:
         extras = msgpack.loads(meta['extra'])
-        parsed_meta = {**parsed_meta, **extras}
+        if parsed_meta is not None:
+            parsed_meta = {**parsed_meta, **extras}
+        else:
+            parsed_meta = extras
     if user_extra is not None:
-        parsed_meta = {**parsed_meta, **user_extra}
+        if parsed_meta is not None:
+            parsed_meta = {**parsed_meta, **user_extra}
+        else:
+            parsed_meta = user_extra
+
+    if parsed_meta is None:
+        parsed_meta = {}
 
     feats = sorted(list(parsed_meta.keys()))
     if 'score' in feats:

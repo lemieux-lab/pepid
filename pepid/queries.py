@@ -104,7 +104,7 @@ def user_processing(start, end):
     in the sense of the user scoring function (metadata is not otherwise consulted).
     """
     
-    metadata_fn = pepid_utils.import_or(blackboard.config['processing.query']['postprocessing function'], None)
+    metadata_fn = pepid_utils.import_or(blackboard.config['processing.query']['postprocessing function'].strip(), None)
 
     if metadata_fn is None:
         return
