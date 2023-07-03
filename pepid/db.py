@@ -112,7 +112,8 @@ class post_ml_spectrum(object):
 
         payloads = []
         for c in cands:
-            payloads.append({'pep': c['seq'], 'mods': msgpack.loads(c['mods']), 'mass': pepid_utils.neutral_mass(c['seq'], c['mods'], nterm, cterm, z=1)})
+            mods = msgpack.loads(c['mods'])
+            payloads.append({'pep': c['seq'], 'mods': mods, 'mass': pepid_utils.neutral_mass(c['seq'], mods, nterm, cterm, z=1)})
         embs = torch.FloatTensor(specgen.embed_all(payloads))
 
         max_peaks = 500
@@ -156,7 +157,7 @@ class theoretical_spectrum(object):
 
         for cand in cands:
             seq = cand['seq']
-            mod = cand['mods']
+            mod = msgpack.loads(cand['mods'])
             masses = pepid_utils.theoretical_masses(seq, mod, nterm, cterm, charge=max_charge, exclude_end=exclude_end, weights=weights)
             ret.append(masses)
 
