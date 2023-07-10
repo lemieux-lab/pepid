@@ -51,6 +51,12 @@ While pepid has some overhead compared to other engines due to its organization,
 
 ![Pepid is faster than X!Tandem with similar search parameters](https://raw.githubusercontent.com/lemieux-lab/pepid/master/images/runtime_perf.svg)
 
+## Good
+
+Pepid achieves competitive identification performance on datasets such as ProteomeTools, a prerequisite for an effective peptide identification research platform.
+
+![Pepid identifies peptides about as well as popular alternatives](https://raw.githubusercontent.com/lemieux-lab/pepid/master/images/idents.svg)
+
 ## Scoring Functions
 
 Pepid supports baseline scoring functions based on the popular search engines Comet and X!Tandem with improvements that let it identify significantly more peptides at low FDR in realistic scenarios.
@@ -77,8 +83,7 @@ Pepid also outputs a graphical report that can be used to quickly ascertain the 
 
 ## State of the Art Features
 
-Experimental deep learning-based features are available for experimentation. Future releases will include better supported use of those features.
-Pepid includes a peptide length prediction module that can be enabled by adding extensions.predict\_length in preprocessing and extensions.postprocess\_for\_length in postprocessing, a rescoring algorithm based on a pretrained ground truth separation paradigm trained on Massive-KB along with a finetuning phase for experimental condition correction, and a whole-spectrum prediction algorithm similar to PredFull.
+Experimental deep learning-based features are available for experimentation, including a length prediction module, a custom random forest-based rescoring algorithm, and a full-spectrum generator (jointly pedicting both m/z and intensity, not just intensity).
 
 ## Citing
 
