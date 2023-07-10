@@ -103,6 +103,8 @@ class post_ml_spectrum(object):
 
         global MODEL
 
+        max_peaks = 500
+
         if MODEL is None:
             MODEL = specgen.Model().eval().to(device)
             MODEL.load_state_dict(torch.load(blackboard.here("ml/best_specgen.pkl"), map_location=device))
@@ -111,20 +113,21 @@ class post_ml_spectrum(object):
         nterm = blackboard.config['processing.db'].getfloat('nterm cleavage')
 
         payloads = []
-        for c in cands:
+        out = numpy.zeros((len(cands), specgen.MAX_CHARGE, max_peaks, 2), dtype='float32')
+
+        for ic, c in enumerate(cands):
             mods = msgpack.loads(c['mods'])
             payloads.append({'pep': c['seq'], 'mods': mods, 'mass': pepid_utils.neutral_mass(c['seq'], mods, nterm, cterm, z=1)})
-        embs = torch.FloatTensor(specgen.embed_all(payloads))
 
-        max_peaks = 500
-        out = [None for _ in range(len(embs))]
+            if (ic != 0 and ic % batch_size == 0) or (ic == len(cands)-1):
+                embs = specgen.embed_all(payloads)
+                payloads = []
 
-        with torch.no_grad():
-            for bidx in range(0, len(embs), batch_size):
-                pred = MODEL(embs[bidx:bidx+batch_size].to(device)).detach().cpu().numpy()
-                sparsed = pepid_utils.dense_to_sparse(pred.reshape((-1, pred.shape[-1])), n_max = max_peaks)
-                sparsed = sparsed.reshape((-1, pred.shape[1], sparsed.shape[-2], 2))
-                out[bidx:bidx+batch_size] = sparsed
+                with torch.no_grad():
+                    pred = MODEL(torch.FloatTensor(embs).to(device)).detach().cpu().numpy()
+                    sparsed = pepid_utils.dense_to_sparse(pred.reshape((-1, pred.shape[-1])), n_max = max_peaks)
+                    sparsed = sparsed.reshape((-1, pred.shape[1], sparsed.shape[-2], 2))
+                    out[ic-len(embs)+1:ic+1] = sparsed
 
         if 'cuda' in device:
             import gc
@@ -135,6 +138,7 @@ class post_ml_spectrum(object):
             blackboard.unlock(gpu_lock)
 
         for o in range(len(out)):
+            assert (o < len(cands)) and (o < len(out)), "WTF! {} {} {}".format(o, len(cands), len(out))
             cands[o]['meta'] = pickle.dumps({'MLSpec': out[o]})
         return cands
 

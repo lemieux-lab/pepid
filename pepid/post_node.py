@@ -24,14 +24,14 @@ class PostNode(node.Node):
         post_fn = blackboard.config['postsearch']['function'].strip()
         if post_fn != '':
             post_fn = pepid_utils.import_or(post_fn, None)
+        else:
+            post_fn = None
 
         if not self.path:
             raise ValueError("'do' message received before 'prepare' message, aborting.")
 
         if post_fn is None:
             blackboard.LOG.warning("Could not find postprocessing function '{}', not applying postprocessing".format(blackboard.config['postsearch']['function']))
-            return
-        elif post_fn == '':
             return
         else:
             post_fn(start, end)

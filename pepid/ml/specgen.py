@@ -47,9 +47,11 @@ def prepare_spec(spec):
     spec_fwd = numpy.sqrt(spec_fwd)
     return spec_fwd
 
-@numba.njit(locals={'i': numba.int32, 'indexed': numba.int32})
+numba.njit(locals={'i': numba.int32, 'indexed': numba.int32})
 def embed(pep, mods, mass, mass_scale = MAX_MZ):
 # Input is {"pep": peptide, 'mods': mods, "mass": precursor mass}
+    pep = pep[:PROT_STR_LEN]
+    mods = mods[:PROT_STR_LEN]
     emb = numpy.zeros((PROT_STR_LEN + 1, INP_SIZE), dtype='float32')
 
     for i in range(len(pep), PROT_STR_LEN, 1):

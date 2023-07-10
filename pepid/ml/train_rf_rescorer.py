@@ -69,8 +69,8 @@ def run(cfg_file):
     specgen_feats = set(['MLCorr'])
 
     # XXX: To disable length and/or specgen feats to generate the partial rescorers:
-    #forbidden_feats |= length_feats
-    #forbidden_feats |= specgen_feats
+    forbidden_feats |= length_feats
+    forbidden_feats |= specgen_feats
 
     the_feats = [f for f in pin_header if f not in forbidden_feats]
     the_feats = numpy.unique(the_feats).tolist()

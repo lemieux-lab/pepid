@@ -100,8 +100,7 @@ class predict_length(object):
 
         global model
         if model is None:      
-            model = length_model.Model()
-            model.to(device)
+            model = length_model.Model().eval().to(device)
             model.load_state_dict(torch.load(blackboard.here('ml/best_lgt_model.pkl'), map_location=device))
 
         ret = []

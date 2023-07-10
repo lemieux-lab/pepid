@@ -5,6 +5,8 @@ import tqdm
 import math
 import sqlite3
 
+import pickle
+
 if __package__ is None or __package__ == '':
     from pepid import pepid_utils
 else:
@@ -100,7 +102,7 @@ def tda_fdr(rescored=False):
         meta = qcur.fetchall()
         mm = {}
         for m in meta:
-            mm[m['rowid']] = msgpack.loads(m['meta'])
+            mm[m['rowid']] = pickle.loads(m['meta'])
             if 'mgf:SEQ' not in mm[m['rowid']]:
                 blackboard.LOG.error("Required key 'mgf:SEQ' not found (first error at {})".format(m['rowid']))
                 sys.exit(-2)
