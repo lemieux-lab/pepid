@@ -430,7 +430,7 @@ if __name__ == "__main__":
     fdr_limit = float(blackboard.config['report']['fdr threshold'])
 
     fig, axs, leg = plot_report(stats, fdr_limit)
-    fig.legend(handles=leg, loc='lower center', ncols=3, bbox_to_anchor=(0.5, -0.025))
+    fig.legend(handles=leg, loc='lower center', ncol=3, bbox_to_anchor=(0.5, -0.025))
     fig.tight_layout()
 
     import pickle
