@@ -87,4 +87,16 @@ Experimental deep learning-based features are available for experimentation, inc
 
 ## Citing
 
-See upcoming paper for more details.
+Please cite the following paper if you found Pepid useful:
+
+```
+@article{Zumer2023,
+  title = {Pepid: a Highly Modifiable,  Bioinformatics-Oriented Peptide Search Engine},
+  url = {http://dx.doi.org/10.1101/2023.10.30.564469},
+  DOI = {10.1101/2023.10.30.564469},
+  publisher = {Cold Spring Harbor Laboratory},
+  author = {Zumer,  Jeremie and Lemieux,  Sébastien},
+  year = {2023},
+  month = nov 
+}
+```
